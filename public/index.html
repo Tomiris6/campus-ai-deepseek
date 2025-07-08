@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Campus AI Digital Human system</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap');
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Poppins', sans-serif;
+}
+
+body {
+    background: var(--secondary-color);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100dvh;
+}
+
+:root {
+    --primary-color: #4F6BFE;
+    --light-primary-color: #4F6BFE1A;
+    --secondary-color: #4F6CFE1A;
+}
+
+.container {
+    background: white;
+    width: 25rem;
+    max-height: 35rem;
+    box-shadow: 0px 5px 10px rgba(0, 0, 0, 0.05);
+    border-radius: 0.75rem;
+    height: 90%;
+    margin-inline: 1rem;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.header {
+    background: var(--primary-color);
+    padding: 1rem;
+    text-align: center;
+    color: white;
+}
+
+.content {
+    padding: 1rem;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    overflow: auto;
+}
+
+.answer-section {
+    background: var(--light-primary-color);
+    padding: 0.5rem;
+    border-radius: 0.5rem 0.5rem 0.5rem 0;
+    width: fit-content;
+    display: flex;
+    align-items: center;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.question-section {
+    background: var(--primary-color);
+    color: white;
+    padding: 0.5rem;
+    width: fit-content;
+    border-radius: 0.5rem 0.5rem 0rem 0.5rem;
+    margin-left: auto;
+    overflow-wrap: anywhere;
+}
+
+.chat-form {
+    border-top: 1px solid #F2F2F2;
+    padding: 1rem;
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+}
+
+.chat-input {
+    outline: none;
+    border: none;
+    flex: 1;
+    height: 2.5rem;
+    width: 100%;
+}
+
+.send-button {
+    background: var(--primary-color);
+    border: none;
+    padding: 0.5rem;
+    border-radius: 100%;
+    width: 45px;
+    height: 45px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: 0.25s ease;
+}
+
+.send-button-nonactive {
+    opacity: 0.1;
+    background: black;
+    pointer-events: none;
+}
+
+.send-button:active {
+    transform: scale(0.9);
+}
+  </style>
+</head>
+<body>
+    <main class="container">
+        <header class="header">
+            <h2 class="title">Campus AI Digital Human system</h2>
+        </header>
+    
+        <div class="content" id="content">
+            <div class="answer-section">
+                Hello! How can I help you?
+            </div>
+            <div class="question-section">
+                Hello! 
+            </div>
+        </div>
+        
+        <footer class="chat-form"> 
+            <input id="chatInput" class="chat-input" type="text" placeholder="Type message">
+            <button id="sendButton" class="send-button">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="22" y1="2" x2="11" y2="13"></line>
+                    <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                </svg>
+            </button>
+        </footer>
+      </main>
+    
+      <script>
+      const API_KEY = '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'; 
+    
+      const content = document.getElementById('content');
+      const chatInput = document.getElementById('chatInput');
+      const sendButton = document.getElementById('sendButton');
+    
+      let isAnswerLoading = false;
+      let answerSectionId = 0;
+    
+      sendButton.addEventListener('click', () => handleSendMessage());
+      chatInput.addEventListener('keypress', event => {
+          if (event.key === 'Enter') {
+              handleSendMessage();
+          }
+      });
+    
+      function handleSendMessage() {
+          const question = chatInput.value.trim();
+          if (question === '' || isAnswerLoading) return;
+    
+          sendButton.disabled = true;
+          addQuestionSection(question);
+          chatInput.value = '';
+      }
+    
+      function getAnswer(question) {
+          fetch("https://openrouter.ai/api/v1/chat/completions", {
+              method: "POST",
+              headers: {
+                  "Authorization": `Bearer ${API_KEY}`,
+                  "Content-Type": "application/json"
+              },
+              body: JSON.stringify({
+                  "model": "deepseek/deepseek-r1-distill-llama-70b:free",
+                  "messages": [{
+                      "role": "user",
+                      "content": question
+                  }]
+              })
+          })
+          .then(response => response.json())
+          .then(data => {
+              const resultData = data.choices[0].message.content;
+              isAnswerLoading = false;
+              updateAnswerSection(resultData);
+          })
+          .catch(error => {
+              console.error("Error:", error);
+              updateAnswerSection("Sorry, an error occurred. Please try again.");
+          })
+          .finally(() => {
+              sendButton.disabled = false;
+              scrollToBottom();
+          });
+      }
+    
+      function addQuestionSection(message) {
+          isAnswerLoading = true;
+          const sectionElement = document.createElement('div');
+          sectionElement.className = 'question-section';
+          sectionElement.textContent = message;
+          content.appendChild(sectionElement);
+          
+          answerSectionId++;
+          const answerElement = document.createElement('div');
+          answerElement.className = 'answer-section';
+          answerElement.id = 'answer-' + answerSectionId;
+          answerElement.innerHTML = getLoadingSvg();
+          content.appendChild(answerElement);
+          
+          getAnswer(message);
+          scrollToBottom();
+      }
+    
+      function updateAnswerSection(message) {
+          const answerSectionElement = document.getElementById('answer-' + answerSectionId);
+          if (answerSectionElement) {
+              answerSectionElement.textContent = message;
+          }
+      }
+    
+      function getLoadingSvg() {
+          return '<svg style="height: 25px;" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"><circle fill="#4F6BFE" stroke="#4F6BFE" stroke-width="15" r="15" cx="40" cy="65"><animate attributeName="cy" calcMode="spline" dur="2" values="65;135;65;" keySplines=".5 0 .5 1;.5 0 .5 1" repeatCount="indefinite" begin="-.4"></animate></circle><circle fill="#4F6BFE" stroke="#4F6BFE" stroke-width="15" r="15" cx="100" cy="65"><animate attributeName="cy" calcMode="spline" dur="2" values="65;135;65;" keySplines=".5 0 .5 1;.5 0 .5 1" repeatCount="indefinite" begin="-.2"></animate></circle><circle fill="#4F6BFE" stroke="#4F6BFE" stroke-width="15" r="15" cx="160" cy="65"><animate attributeName="cy" calcMode="spline" dur="2" values="65;135;65;" keySplines=".5 0 .5 1;.5 0 .5 1" repeatCount="indefinite" begin="0"></animate></circle></svg>';
+      }
+    
+      function scrollToBottom() {
+          content.scrollTo({
+              top: content.scrollHeight,
+              behavior: 'smooth'
+          });
+      }
+      </script>
+    </body>
+    </html>
