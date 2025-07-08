@@ -2,14 +2,16 @@
 # Campus AI Assistant
 
 To start working:
-
+1. Install it first: Download Node.js (v18+)
+2. 
 ```bash
+git clone https://github.com/Tomiris6/campus-ai-deepseek.git
 cd campus-ai-deepseek
 npm install
 echo "DEEPSEEK_API_KEY=your_key_here" > .env
 node server.js
 ```
-
+3. 
 Open in browser: [http://localhost:3000](http://localhost:3000)
 
 ## Project Structure
