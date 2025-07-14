@@ -135,6 +135,7 @@ body {
         </div>
         
         <footer class="chat-form"> 
+            <button onclick="clearChatHistory()">Clear Chat</button>
             <input id="chatInput" class="chat-input" type="text" placeholder="Type message">
             <button id="sendButton" class="send-button">
                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -144,99 +145,6 @@ body {
             </button>
         </footer>
       </main>
-    
-      <script>
-      const API_KEY = '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'; 
-    
-      const content = document.getElementById('content');
-      const chatInput = document.getElementById('chatInput');
-      const sendButton = document.getElementById('sendButton');
-    
-      let isAnswerLoading = false;
-      let answerSectionId = 0;
-    
-      sendButton.addEventListener('click', () => handleSendMessage());
-      chatInput.addEventListener('keypress', event => {
-          if (event.key === 'Enter') {
-              handleSendMessage();
-          }
-      });
-    
-      function handleSendMessage() {
-          const question = chatInput.value.trim();
-          if (question === '' || isAnswerLoading) return;
-    
-          sendButton.disabled = true;
-          addQuestionSection(question);
-          chatInput.value = '';
-      }
-    
-      function getAnswer(question) {
-          fetch("https://openrouter.ai/api/v1/chat/completions", {
-              method: "POST",
-              headers: {
-                  "Authorization": `Bearer ${API_KEY}`,
-                  "Content-Type": "application/json"
-              },
-              body: JSON.stringify({
-                  "model": "deepseek/deepseek-r1-distill-llama-70b:free",
-                  "messages": [{
-                      "role": "user",
-                      "content": question
-                  }]
-              })
-          })
-          .then(response => response.json())
-          .then(data => {
-              const resultData = data.choices[0].message.content;
-              isAnswerLoading = false;
-              updateAnswerSection(resultData);
-          })
-          .catch(error => {
-              console.error("Error:", error);
-              updateAnswerSection("Sorry, an error occurred. Please try again.");
-          })
-          .finally(() => {
-              sendButton.disabled = false;
-              scrollToBottom();
-          });
-      }
-    
-      function addQuestionSection(message) {
-          isAnswerLoading = true;
-          const sectionElement = document.createElement('div');
-          sectionElement.className = 'question-section';
-          sectionElement.textContent = message;
-          content.appendChild(sectionElement);
-          
-          answerSectionId++;
-          const answerElement = document.createElement('div');
-          answerElement.className = 'answer-section';
-          answerElement.id = 'answer-' + answerSectionId;
-          answerElement.innerHTML = getLoadingSvg();
-          content.appendChild(answerElement);
-          
-          getAnswer(message);
-          scrollToBottom();
-      }
-    
-      function updateAnswerSection(message) {
-          const answerSectionElement = document.getElementById('answer-' + answerSectionId);
-          if (answerSectionElement) {
-              answerSectionElement.textContent = message;
-          }
-      }
-    
-      function getLoadingSvg() {
-          return '<svg style="height: 25px;" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"><circle fill="#4F6BFE" stroke="#4F6BFE" stroke-width="15" r="15" cx="40" cy="65"><animate attributeName="cy" calcMode="spline" dur="2" values="65;135;65;" keySplines=".5 0 .5 1;.5 0 .5 1" repeatCount="indefinite" begin="-.4"></animate></circle><circle fill="#4F6BFE" stroke="#4F6BFE" stroke-width="15" r="15" cx="100" cy="65"><animate attributeName="cy" calcMode="spline" dur="2" values="65;135;65;" keySplines=".5 0 .5 1;.5 0 .5 1" repeatCount="indefinite" begin="-.2"></animate></circle><circle fill="#4F6BFE" stroke="#4F6BFE" stroke-width="15" r="15" cx="160" cy="65"><animate attributeName="cy" calcMode="spline" dur="2" values="65;135;65;" keySplines=".5 0 .5 1;.5 0 .5 1" repeatCount="indefinite" begin="0"></animate></circle></svg>';
-      }
-    
-      function scrollToBottom() {
-          content.scrollTo({
-              top: content.scrollHeight,
-              behavior: 'smooth'
-          });
-      }
-      </script>
+      <script src="script.js"></script>
     </body>
     </html>

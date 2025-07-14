@@ -23,6 +23,7 @@ const schoolData = {
     email: "ktmc@ktmc.edu.hk",
     address: "100 Tsui Ping Road, Kwun Tong, Kowloon, Hong Kong"
   },
+  programs: ["Science", "Arts", "Languages"],
 };
 
 app.get('/', (req, res) => {
@@ -35,9 +36,8 @@ app.get('/api/school-info', (req, res) => {
 
 app.post('/api/chat', async (req, res) => {
   try {
-    const { message } = req.body;
+    const { messages } = req.body;
 
-    
     const systemMessage = {
       role: "system",
       content: `You are the assistant at Kwun Tong Maryknoll College. Answer only questions about the school.
@@ -45,26 +45,26 @@ app.post('/api/chat', async (req, res) => {
     School information:
     - Name: ${schoolData.name}
     - Description: ${schoolData.description}
-    - Programs: ${schoolData.programs.join(', ')}
     - Contacts: Phone ${schoolData.contacts.phone}, email ${schoolData.contacts.email}
     
-    If the question is not about the school, respond: “I can only answer questions about Kwun Tong Maryknoll College.”`
+    If the question is not about the school, respond: "I can only answer questions about Kwun Tong Maryknoll College."`
     };
 
+    // Use the messages array directly from frontend (it already contains the full conversation history)
+    const fullMessages = [systemMessage, ...messages];
 
-    const userMessage = {
-      role: "user",
-      content: message
-    };
+    console.log("Sending messages to AI:", fullMessages.length, "messages");
 
     const response = await openai.chat.completions.create({
       model: 'deepseek-chat',
-      messages: [systemMessage, userMessage], 
+      messages: fullMessages, 
       temperature: 0.3,
       max_tokens: 500
     });
 
-    res.json({ response: response.choices[0].message.content });
+    const assistantResponse = response.choices[0].message.content;
+
+    res.json({ response: assistantResponse });
   } catch (error) {
     console.error('Error:', error);
     res.status(500).json({ error: "Error processing request" });
