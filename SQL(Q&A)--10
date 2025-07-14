@@ -1,0 +1,89 @@
+-- Create database tables
+CREATE TABLE school_info (
+    id SERIAL PRIMARY KEY,
+    category VARCHAR(50) NOT NULL,
+    question TEXT NOT NULL,
+    answer TEXT NOT NULL,
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE school_hours (
+    id SERIAL PRIMARY KEY,
+    day_of_week VARCHAR(10) NOT NULL,
+    opening_time TIME NOT NULL,
+    closing_time TIME NOT NULL,
+    notes TEXT
+);
+
+CREATE TABLE facilities (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    description TEXT,
+    location VARCHAR(50),
+    availability TEXT
+);
+
+CREATE TABLE faqs (
+    id SERIAL PRIMARY KEY,
+    question TEXT NOT NULL,
+    answer TEXT NOT NULL,
+    category VARCHAR(50) NOT NULL,
+    popularity INTEGER DEFAULT 0
+);
+
+-- Insert sample data
+INSERT INTO school_info (category, question, answer) VALUES
+('General', 'What are the school hours?', 'The school operates from 8:00 AM to 3:30 PM Monday to Friday, with some variations for extracurricular activities.'),
+('General', 'What is the school''s mission statement?', 'K.T.M.C. is committed to providing quality education that nurtures students'' intellectual, physical, social, and moral development to become responsible global citizens.'),
+('Admissions', 'What is the admission process?', 'Admissions typically involve submission of application forms, academic records, an interview, and possibly an entrance assessment.'),
+('Academics', 'What curriculum does the school follow?', 'We follow the Hong Kong curriculum with enhancements to provide a well-rounded education.');
+
+INSERT INTO school_hours (day_of_week, opening_time, closing_time, notes) VALUES
+('Monday', '08:00:00', '15:30:00', 'Regular hours'),
+('Tuesday', '08:00:00', '15:30:00', 'Regular hours'),
+('Wednesday', '08:00:00', '15:30:00', 'Regular hours'),
+('Thursday', '08:00:00', '15:30:00', 'Regular hours'),
+('Friday', '08:00:00', '15:30:00', 'Regular hours');
+
+INSERT INTO facilities (name, description, location, availability) VALUES
+('Swimming Pool', 'Olympic-sized pool with 6 lanes', 'East Wing', 'Mon-Fri 3:30-6:30 PM, Sat 9 AM-12 PM'),
+('Library', 'Over 20,000 books in Chinese and English', 'Main Building 2F', 'Mon-Fri 8 AM-5 PM'),
+('Science Lab', 'Fully equipped laboratory for physics, chemistry, and biology', 'North Wing 3F', 'During school hours');
+
+INSERT INTO faqs (question, answer, category, popularity) VALUES
+('What are the school fees?', 'Annual tuition ranges from HKD 50,000 to HKD 80,000 depending on grade level.', 'Finance', 45),
+('Is there a school bus service?', 'Yes, we offer bus routes covering most areas of Hong Kong Island and Kowloon.', 'Transportation', 32),
+('What languages are taught?', 'Mandarin and English are core languages, with options for French and Spanish in senior years.', 'Academics', 28);
+
+-- Sample queries that your chatbot would use
+-- 1. Get answer for a specific question
+SELECT answer FROM school_info WHERE question ILIKE '%school hours%';
+
+-- 2. Get all questions in a category
+SELECT question FROM school_info WHERE category = 'General';
+
+-- 3. Search for questions containing a keyword
+SELECT question, answer FROM faqs 
+WHERE question ILIKE '%language%' OR answer ILIKE '%language%'
+ORDER BY popularity DESC;
+
+-- 4. Update popularity when a question is asked
+UPDATE faqs SET popularity = popularity + 1 WHERE id = 3;
+
+-- 5. Get school hours for a specific day
+SELECT opening_time, closing_time FROM school_hours WHERE day_of_week = 'Monday';
+
+-- 6. Search facilities by name or description
+SELECT name, description, availability FROM facilities 
+WHERE name ILIKE '%pool%' OR description ILIKE '%pool%';
+
+-- 7. Get all FAQ categories and question counts
+SELECT category, COUNT(*) as question_count 
+FROM faqs 
+GROUP BY category 
+ORDER BY question_count DESC;
+
+-- 8. Full-text search across all tables (PostgreSQL specific)
+SELECT question, answer, 'school_info' as source FROM school_info WHERE to_tsvector('english', question || ' ' || answer) @@ to_tsquery('english', 'mission')
+UNION
+SELECT question, answer, 'faqs' as source FROM faqs WHERE to_tsvector('english', question || ' ' || answer) @@ to_tsquery('english', 'mission');
