@@ -1,0 +1,261 @@
+#To run this code copy and paste URL link in line 20 (https://...)
+import urllib.parse
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException
+from webdriver_manager.chrome import ChromeDriverManager
+import time
+import os
+import logging
+from collections import deque # For efficient queue operations
+import random # For random delays
+from bs4 import BeautifulSoup
+import json
+
+# --- Configuration Variables ---
+START_URL = "https://www.ktmc.edu.hk/index"
+MAX_DEPTH = 2
+# Adjust these delays for speed. For maximum speed, set MIN_DELAY_BETWEEN_PAGES to 0
+# and MAX_DELAY_BETWEEN_PAGES to a very small number like 0.1.
+# Be aware that very low delays can lead to IP bans or being blocked by the website.
+MIN_DELAY_BETWEEN_PAGES = 0.5 # Minimum delay for politeness (seconds)
+MAX_DELAY_BETWEEN_PAGES = 1.5 # Maximum delay for politeness (seconds)
+MAX_PAGES_TO_SCRAPE = 100 # Maximum number of pages to scrape
+DOMAIN = urllib.parse.urlparse(START_URL).netloc
+
+# --- Logging Setup ---
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# --- Database Setup ---
+def create_database(db_name):
+    """Creates an SQLite database and a 'pages' table if they don't exist."""
+    conn = sqlite3.connect(db_name)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS pages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            url TEXT UNIQUE,
+            title TEXT,
+            content TEXT,
+            scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+# --- URL Normalization ---
+def normalize_url(url):
+    """Normalizes a URL by removing fragments, queries, and standardizing paths."""
+    parsed = urllib.parse.urlparse(url)
+    # Remove fragment, query parameters, and standardize path
+    clean_url = parsed._replace(fragment='', query='').geturl()
+    if clean_url.endswith('/'):
+        clean_url = clean_url.rstrip('/')
+    # Handle common default file names (e.g., /index.html -> /)
+    if clean_url.endswith(('index.html', 'index.php', 'default.aspx')):
+        clean_url = os.path.dirname(clean_url)
+    return clean_url
+
+# --- Key Tag Extraction Function ---
+def extract_key_tags(page_source):
+    soup = BeautifulSoup(page_source, "html.parser")
+    tags = {
+        "title": soup.title.string.strip() if soup.title and soup.title.string else "",
+        "h1": [h.get_text(strip=True) for h in soup.find_all("h1")],
+        "h2": [h.get_text(strip=True) for h in soup.find_all("h2")],
+        "h3": [h.get_text(strip=True) for h in soup.find_all("h3")],
+        "meta_description": "",
+        "meta_keywords": ""
+    }
+    # Meta description
+    desc = soup.find("meta", attrs={"name": "description"})
+    if desc and desc.get("content"):
+        tags["meta_description"] = desc["content"].strip()
+    # Meta keywords
+    keywords = soup.find("meta", attrs={"name": "keywords"})
+    if keywords and keywords.get("content"):
+        tags["meta_keywords"] = keywords["content"].strip()
+    return tags
+
+# --- Scrape Page Function ---
+def scrape_page(driver, url, depth, scraped_data_list):
+    """
+    Navigates to a URL, extracts its title and content, and saves them to a list.
+    Includes error handling and a random delay.
+    """
+    try:
+        driver.get(url)
+        
+        # Wait for a common element, like the main content area, or body as a fallback
+        # Increased wait time slightly for robustness, but still mindful of speed.
+        try:
+            # Wait for the body element to be present, indicating basic page load
+            WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+            
+            # Attempt to find a more specific content area first for better content extraction
+            # Common selectors for main content: .content, .main-content, #main, article, div[role="main"]
+            content_selectors = "div.content, article.main-content, #main, article, div[role='main'], body"
+            content_element = driver.find_element(By.CSS_SELECTOR, content_selectors)
+            content = content_element.text
+        except NoSuchElementException:
+            logging.warning(f"Could not find specific content element for {url}, falling back to body text.")
+            content = driver.find_element(By.TAG_NAME, "body").text
+        except TimeoutException:
+            logging.warning(f"Timeout waiting for page elements on {url}. Skipping.")
+            return # Exit if timeout
+
+        title = driver.title if driver.title else "No Title Found" # Handle cases where title might be empty
+        # Basic content cleaning: strip whitespace, replace newlines/tabs with spaces, normalize multiple spaces
+        content = content.strip().replace('\n', ' ').replace('\t', ' ')
+        content = ' '.join(content.split()) 
+
+        page_source = driver.page_source
+        key_tags = extract_key_tags(page_source)
+
+        scraped_data_list.append({
+            "url": url,
+            "title": title,
+            "content": content,
+            "key_tags": key_tags
+        })
+        logging.info(f"Scraped: {url} (Depth: {depth})")
+    except WebDriverException as e:
+        logging.error(f"WebDriver error during scraping {url}: {e}. Skipping.")
+    except Exception as e:
+        logging.error(f"An unexpected error occurred while scraping {url}: {e}. Skipping.")
+    
+    # Introduce a random delay for politeness and to avoid detection
+    time.sleep(random.uniform(MIN_DELAY_BETWEEN_PAGES, MAX_DELAY_BETWEEN_PAGES))
+
+# --- Main Crawling Function ---
+def crawl_website(start_url, max_depth, max_pages_to_scrape):
+    """
+    Main function to crawl a website, extract data, and save it.
+    Implements breadth-first search, depth limiting, and page limits.
+    """
+    # Set up Selenium WebDriver with speed optimizations
+    options = Options()
+    options.headless = True # Run in headless mode (no browser UI)
+    options.add_argument("--disable-gpu") # Recommended for headless mode
+    options.add_argument("--no-sandbox") # Bypass OS security model, useful in some environments
+    options.add_argument("--disable-dev-shm-usage") # Overcome limited resource problems in Docker/Linux
+    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36") # Mimic a real browser
+    
+    # --- Speed Optimization: Disable unnecessary resources ---
+    prefs = {
+        "profile.managed_default_content_settings.images": 2, # Disable images
+        "profile.default_content_settings.popups": 0, # Disable popups
+        "profile.managed_default_content_settings.stylesheet": 2, # Disable stylesheets
+        # "profile.managed_default_content_settings.javascript": 2, # Only disable if JS is not needed for content
+        "profile.default_content_setting_values.notifications": 2, # Disable notifications
+        "profile.default_content_setting_values.automatic_downloads": 2, # Disable automatic downloads
+        "profile.default_content_setting_values.plugins": 2 # Disable plugins
+    }
+    options.add_experimental_option("prefs", prefs)
+    # --- End Speed Optimization ---
+
+    try:
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=options)
+    except Exception as e:
+        logging.critical(f"Failed to initialize ChromeDriver: {e}. Exiting.")
+        return
+
+    scraped_data_list = [] # Store data for CSV export
+
+    visited_urls = set() # To keep track of already processed URLs
+    # Use deque for efficient queue operations (FIFO for breadth-first search)
+    urls_to_visit = deque([(start_url, 0)])
+    
+    # File extensions to skip (non-HTML content)
+    SKIP_EXTENSIONS = [
+        '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+        '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.svg', '.zip', '.rar',
+        '.mp3', '.mp4', '.avi', '.mov', '.css', '.js', '.xml', '.json', '.txt'
+    ]
+    # Keywords in URLs to skip (e.g., mailto links, phone numbers, specific sections)
+    SKIP_KEYWORDS = ['flipbook', 'mailto:', 'tel:', 'javascript:']
+
+    pages_scraped_count = 0
+
+    while urls_to_visit and pages_scraped_count < max_pages_to_scrape:
+        current_url, current_depth = urls_to_visit.popleft() # Get the next URL to visit
+
+        normalized_current_url = normalize_url(current_url)
+        
+        # Skip if already visited or depth limit exceeded
+        if normalized_current_url in visited_urls or current_depth > max_depth:
+            logging.debug(f"Skipping {current_url}: Already visited or depth exceeded.")
+            continue
+        
+        visited_urls.add(normalized_current_url) # Mark as visited
+
+        parsed_url = urllib.parse.urlparse(current_url)
+        # Skip if the URL is outside the defined domain
+        if parsed_url.netloc != DOMAIN:
+            logging.debug(f"Skipping external link: {current_url}")
+            continue
+        
+        # Skip if it's a known non-HTML file extension or contains unwanted keywords
+        if any(current_url.lower().endswith(ext) for ext in SKIP_EXTENSIONS) or \
+           any(keyword in current_url.lower() for keyword in SKIP_KEYWORDS):
+            logging.debug(f"Skipping URL due to extension/keyword: {current_url}")
+            continue
+
+        # Scrape the current page
+        scrape_page(driver, current_url, current_depth, scraped_data_list)
+        pages_scraped_count += 1
+        
+        # If the current depth allows, find and add new links to the queue
+        if current_depth < max_depth:
+            try:
+                # Wait for links to be present before trying to find them
+                WebDriverWait(driver, 5).until(EC.presence_of_all_elements_located((By.TAG_NAME, "a")))
+                links = driver.find_elements(By.TAG_NAME, "a")
+                
+                for link in links:
+                    href = link.get_attribute("href")
+                    if href:
+                        full_url = urllib.parse.urljoin(current_url, href)
+                        normalized_full_url = normalize_url(full_url)
+
+                        parsed_href = urllib.parse.urlparse(full_url)
+                        
+                        # Check if within the same domain and not already visited or in the queue
+                        if parsed_href.netloc == DOMAIN and \
+                           normalized_full_url not in visited_urls and \
+                           (normalized_full_url, current_depth + 1) not in urls_to_visit: 
+                            
+                            # Re-check skip extensions and keywords for newly found links
+                            if not any(normalized_full_url.lower().endswith(ext) for ext in SKIP_EXTENSIONS) and \
+                               not any(keyword in normalized_full_url.lower() for keyword in SKIP_KEYWORDS):
+                                urls_to_visit.append((normalized_full_url, current_depth + 1))
+                                logging.debug(f"Added to queue: {normalized_full_url} (Depth: {current_depth + 1})")
+
+            except TimeoutException:
+                logging.warning(f"Timeout waiting for links on {current_url}.")
+            except Exception as e:
+                logging.error(f"Error finding or processing links on {current_url}: {e}")
+    
+    logging.info(f"Crawling completed. Scraped {pages_scraped_count} pages.")
+    
+    # --- Finalization: Close driver, database, and save CSV ---
+    try:
+        if driver: # Ensure driver exists before quitting
+            driver.quit()
+            logging.info("WebDriver closed.")
+        print(f"Total pages scraped: {len(scraped_data_list)}")
+        with open("scraped_data_with_tags.json", "w", encoding="utf-8") as jsonfile:
+            json.dump(scraped_data_list, jsonfile, ensure_ascii=False, indent=2)
+        logging.info("All scraped data with tags saved to scraped_data_with_tags.json")
+
+    except Exception as e:
+        logging.critical(f"Error during finalization (driver quit/json write): {e}")
+
+# --- Run the crawler ---
+if __name__ == "__main__":
+    crawl_website(START_URL, MAX_DEPTH, MAX_PAGES_TO_SCRAPE)
