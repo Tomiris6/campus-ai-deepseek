@@ -1,5 +1,3 @@
-const API_KEY = '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'; 
-
 const content = document.getElementById('content');
 const chatInput = document.getElementById('chatInput');
 const sendButton = document.getElementById('sendButton');
@@ -8,22 +6,11 @@ const sendButton = document.getElementById('sendButton');
 let conversationHistory = [];
 let isAnswerLoading = false;
 let answerSectionId = 0;
-const CONTEXT_LENGTH = 10; // Keep last 20 messages (10 pairs)
+const CONTEXT_LENGTH = 20; // Keep last 20 messages (10 pairs)
 
-//for school context
-const systemMessage = {
-    role: "system",
-    content: `You are the assistant at Kwun Tong Maryknoll College. Answer only questions about the school.
-    
-    School information:
-    - Name: Kwun Tong Maryknoll College
-    - Description: Kwun Tong Maryknoll College is the third secondary school opened in Hong Kong by the Maryknoll Fathers, a society of Catholic priests and brothers founded in the United States in 1911.
-    - Contact: Phone (852)2717 1485, email ktmc@ktmc.edu.hk
-    - Address: 100 Tsui Ping Road, Kwun Tong, Kowloon, Hong Kong
-    - Programs: Science, Arts, Languages
-    
-    If the question is not about the school, respond: "I can only answer questions about Kwun Tong Maryknoll College."`
-};
+// The API_KEY and systemMessage constants are removed from here.
+// API key is handled by server.js.
+// System message is dynamically built by server.js with RAG context.
 
 sendButton.addEventListener('click', () => handleSendMessage());
 chatInput.addEventListener('keypress', event => {
@@ -35,7 +22,7 @@ chatInput.addEventListener('keypress', event => {
 function handleSendMessage() {
     const question = chatInput.value.trim();
     if (question === '' || isAnswerLoading) return;
-    
+
     sendButton.classList.add('send-button-nonactive');
     addQuestionSection(question);
     chatInput.value = '';
@@ -43,48 +30,57 @@ function handleSendMessage() {
 
 function getAnswer(question) {
     console.log("Sending question:", question);
-    
+
+    // Your conversation history logic remains the same
     conversationHistory.push({ role: "user", content: question });
-    
     const limitedHistory = conversationHistory.slice(-CONTEXT_LENGTH * 2);
-    
-    const messages = [systemMessage, ...limitedHistory];
-    
-    console.log("Sending to API:", messages.length, "messages");
-    console.log("Messages:", messages);
-    
-    fetch("https://openrouter.ai/api/v1/chat/completions", {
+
+    // We no longer send the systemMessage from the frontend.
+    // The backend (server.js) will construct the full system message
+    // including the retrieved context.
+    // So, we just send the limited chat history (user messages and assistant replies)
+    const messagesToSend = limitedHistory; // Only send the user-assistant conversation history
+
+    console.log("Sending to Backend API:", messagesToSend.length, "messages");
+    console.log("Messages being sent to Backend:", messagesToSend); // Check what's actually sent
+
+    fetch("http://localhost:3000/api/chat", { // Correctly points to your local server!
         method: "POST",
         headers: {
-            "Authorization": `Bearer ${API_KEY}`,
             "Content-Type": "application/json"
+            // "Authorization" header and "model" field are correctly removed from here.
         },
         body: JSON.stringify({
-            "model": "deepseek/deepseek-r1-distill-llama-70b:free",
-            "messages": messages
+            messages: messagesToSend // Send the messages array
         })
     })
-    .then(response => response.json())
-    .then(data => {
-        const resultData = data.choices[0].message.content;
-        
-        conversationHistory.push({ role: "assistant", content: resultData });
-        
-        console.log("Assistant response:", resultData);
-        console.log("Current conversation history:", conversationHistory);
-        
-        isAnswerLoading = false;
-        updateAnswerSection(resultData);
-    })
-    .catch(error => {
-        console.error("Error:", error);
-        updateAnswerSection("Sorry, an error occurred. Please try again.");
-        isAnswerLoading = false;
-    })
-    .finally(() => {
-        sendButton.classList.remove('send-button-nonactive');
-        scrollToBottom();
-    });
+        .then(response => {
+            if (!response.ok) {
+                // Handle HTTP errors, e.g., 500 from your server
+                throw new Error(`HTTP error! Status: ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(data => {
+            const resultData = data.response; // Your server sends 'response' field
+
+            conversationHistory.push({ role: "assistant", content: resultData });
+
+            console.log("Assistant response from Backend:", resultData);
+            console.log("Current conversation history:", conversationHistory);
+
+            isAnswerLoading = false;
+            updateAnswerSection(resultData);
+        })
+        .catch(error => {
+            console.error("Error communicating with backend:", error); // More specific error message
+            updateAnswerSection("Sorry, an error occurred with the server. Please try again.");
+            isAnswerLoading = false;
+        })
+        .finally(() => {
+            sendButton.classList.remove('send-button-nonactive');
+            scrollToBottom();
+        });
 }
 
 function addQuestionSection(message) {
@@ -93,14 +89,14 @@ function addQuestionSection(message) {
     sectionElement.className = 'question-section';
     sectionElement.textContent = message;
     content.appendChild(sectionElement);
-    
+
     answerSectionId++;
     const answerElement = document.createElement('div');
     answerElement.className = 'answer-section';
     answerElement.id = 'answer-' + answerSectionId;
     answerElement.innerHTML = getLoadingSvg();
     content.appendChild(answerElement);
-    
+
     getAnswer(message);
     scrollToBottom();
 }
