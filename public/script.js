@@ -6,7 +6,7 @@ const sendButton = document.getElementById('sendButton');
 let conversationHistory = [];
 let isAnswerLoading = false;
 let answerSectionId = 0;
-const CONTEXT_LENGTH = 20; // Keep last 20 messages (10 pairs)
+const CONTEXT_LENGTH = 30; // Keep last 30 messages (15 pairs)
 
 // The API_KEY and systemMessage constants are removed from here.
 // API key is handled by server.js.
@@ -104,7 +104,7 @@ function addQuestionSection(message) {
 function updateAnswerSection(message) {
     const answerSectionElement = document.getElementById('answer-' + answerSectionId);
     if (answerSectionElement) {
-        answerSectionElement.textContent = message;
+        answerSectionElement.innerHTML = marked.parse(message); // <-- ENSURE THIS LINE IS CORRECT
     }
 }
 
