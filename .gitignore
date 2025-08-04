@@ -1,5 +1,13 @@
+# Python-related
 venv/
 __pycache__/
 *.pyc
 .env
-node_modules
+
+# Node.js-related
+node_modules/
+
+# Custom directory or file
+before_perplexity/
+.DS_Store
+
