@@ -6,7 +6,7 @@ const sendButton = document.getElementById('sendButton');
 let conversationHistory = [];
 let isAnswerLoading = false;
 let answerSectionId = 0;
-const CONTEXT_LENGTH = 30; // Keep last 30 messages (15 pairs)
+const CONTEXT_LENGTH = 10; // Keep last 10 messages (5 pairs)
 
 // The API_KEY and systemMessage constants are removed from here.
 // API key is handled by server.js.
