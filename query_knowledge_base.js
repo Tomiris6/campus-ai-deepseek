@@ -1,3 +1,5 @@
+// query_knowledge_base.js
+
 const { Pool } = require('pg');
 const axios = require('axios');
 const { encoding_for_model } = require('@dqbd/tiktoken');

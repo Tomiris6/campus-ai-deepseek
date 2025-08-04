@@ -38,29 +38,6 @@ pool.connect((err, client, release) => {
   });
 });
 
-const schoolData = {
-  name: "Kwun Tong Maryknoll College",
-  description:
-    "Kwun Tong Maryknoll College is the third secondary school opened in Hong Kong by the Maryknoll Fathers, a society of Catholic priests and brothers founded in 1911. At that time there were only two 'Maryknollers' - Father James A.Walsh and Father Frederick Price. They came together to start a missionary work which has since grown into a society of over a thousand priests, brothers and students dedicated to bringing the knowledge and love of God to the people of 18 countries around the world.",
-  established_year: "1971",
-  contacts: {
-    phone: "(852)2717 1485",
-    email: "ktmc@ktmc.edu.hk",
-    address: "100 Tsui Ping Road, Kwun Tong, Kowloon, Hong Kong",
-  },
-  programs: ["Science", "Arts", "Languages"],
-};
-
-const basicSchoolInfoString = `
-School Name: ${schoolData.name}
-Established Year: ${schoolData.established_year}
-School Description: ${schoolData.description}
-Contacts:
-  Phone: ${schoolData.contacts.phone}
-  Email: ${schoolData.contacts.email}
-  Address: ${schoolData.contacts.address}
-Programs: ${schoolData.programs.join(', ')}
-`;
 
 const openai = new OpenAI({
   apiKey: process.env.API_KEY,
@@ -72,9 +49,6 @@ app.get('/', (req, res) => {
   res.sendFile(__dirname + '/public/index.html');
 });
 
-app.get('/api/school-info', (req, res) => {
-  res.json(schoolData);
-});
 
 app.post('/api/chat', async (req, res) => {
   console.time('Total Chat Request Processing');
@@ -112,19 +86,15 @@ You will soon have your answers read aloud by a digital avatar, so everything yo
 - Use clear, respectful language familiar to these groups.
 
 **Information Hierarchy & Rules:**  
-1. Use information from "Relevant Information from Knowledge Base" first if available.  
-2. Otherwise, use details from the "Basic School Information" below.  
-3. Only share explicitly stated information — do NOT speculate or invent answers.  
-4. Provide contact details (phone, email, address) only if present.
+1. Use responses only from the "Relevant Information from Knowledge Base".   
+2. Only share explicitly stated information — do NOT speculate or invent answers.  
+3. Provide contact details (phone, email, address) only if present.
 
 **If you do NOT know the answer or it is out of scope, reply EXACTLY:**  
 "I apologize, but I don't have enough information to answer that question. Please contact Kwun Tong Maryknoll College directly for more details.  
 Let me know if you have any other questions."
 
----
-Basic School Information:  
-${basicSchoolInfoString}
-`;
+---`;
 
     if (retrievedContextString && retrievedContextString.trim().length > 0) {
       systemContent += `\n---\nRelevant Information from Knowledge Base:\n${retrievedContextString}\n`;
