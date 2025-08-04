@@ -12,7 +12,7 @@ const pool = new Pool({
 });
 
 const openrouterBaseUrl = 'https://openrouter.ai/api/v1';
-const openrouterApiKey = process.env.OPENROUTER_API_KEY;
+const openrouterApiKey = process.env.API_KEY;
 const ollamaBaseUrl = 'http://localhost:11434';
 
 const tokenizer = encoding_for_model('gpt-3.5-turbo');
@@ -92,57 +92,36 @@ async function getEmbedding(text) {
     }
 }
 
-async function fullTextSearch(query, limit = 5) {
-    const sql = `
-    SELECT content_text
-    FROM knowledge_base
-    WHERE content_text_tsv @@ plainto_tsquery('english', $1)
-    LIMIT $2;
-  `;
-    try {
-        const { rows } = await pool.query(sql, [query, limit]);
-        return rows.map(row => row.content_text);
-    } catch (error) {
-        console.error('Error performing full-text search:', error.message);
-        return [];
-    }
-}
 
-async function getHybridContext(query, embedding, limit = 5) {
+async function getVectorContext(embedding, limit = 10) {
     try {
         const vectorRows = (await pool.query(
             `SELECT content_text, embedding <-> $1 AS distance
-       FROM knowledge_base
-       ORDER BY distance
-       LIMIT $2;`,
+             FROM knowledge_base
+             ORDER BY distance
+             LIMIT $2;`,
             [JSON.stringify(embedding), limit]
         )).rows;
 
-        const fullTextRows = await fullTextSearch(query, limit);
+        const uniqueChunks = Array.from(new Set(vectorRows.map(r => r.content_text)));
 
-        console.log(`\n--- Hybrid Retrieval for query: "${query}" ---`);
+        console.log(`\n--- Vector Retrieval ---`);
         console.log(`Vector search returned ${vectorRows.length} chunks:`);
+
         vectorRows.forEach((r, i) => {
             const preview = r.content_text.substring(0, 100).replace(/\n/g, ' ') + (r.content_text.length > 100 ? '...' : '');
             console.log(`  [V${i + 1}] ${preview}`);
         });
-        console.log(`Full-text keyword search returned ${fullTextRows.length} chunks:`);
-        fullTextRows.forEach((text, i) => {
-            const preview = text.substring(0, 100).replace(/\n/g, ' ') + (text.length > 100 ? '...' : '');
-            console.log(`  [K${i + 1}] ${preview}`);
-        });
-
-        const allChunks = [...vectorRows.map(r => r.content_text), ...fullTextRows];
-        const uniqueChunks = Array.from(new Set(allChunks));
 
         console.log(`After deduplication, total unique chunks: ${uniqueChunks.length}`);
 
         return uniqueChunks;
     } catch (error) {
-        console.error('Error in hybrid retrieval:', error.message || error);
+        console.error('Error in vector retrieval:', error.message || error);
         return [];
     }
 }
+
 
 function selectChunksWithinTokenLimit(chunks, maxTokens) {
     const selectedChunks = [];
@@ -177,7 +156,7 @@ async function queryKnowledgeBase(userQuery) {
             console.log(`Embedding generated in ${(Date.now() - startEmbedding) / 1000}s`);
 
             const startRetrieve = Date.now();
-            const chunks = await getHybridContext(q, embedding, 10);
+            const chunks = await getVectorContext(embedding, 10);
             console.log(`Retrieved ${chunks.length} chunks in ${(Date.now() - startRetrieve) / 1000}s`);
 
             candidateChunks.push(...chunks);

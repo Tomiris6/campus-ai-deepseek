@@ -63,7 +63,7 @@ Programs: ${schoolData.programs.join(', ')}
 `;
 
 const openai = new OpenAI({
-  apiKey: process.env.OPENROUTER_API_KEY,
+  apiKey: process.env.API_KEY,
   baseURL: 'https://openrouter.ai/api/v1',
   timeout: 60000,
 });
