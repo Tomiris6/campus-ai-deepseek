@@ -12,7 +12,7 @@ This branch implements a complete RAG (Retrieval-Augmented Generation) architect
 ```
 ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
 │   Data Source   │───▶│   Web Scraping   │───▶│  Data Storage   │
-│  (School Site)  │    │  (Selenium +     │    │ (PostgreSQL +   │
+│  (Website)  │    │  (Selenium +     │    │ (PostgreSQL +   │
 │                 │    │   BeautifulSoup) │    │   pgvector)     │
 └─────────────────┘    └──────────────────┘    └─────────────────┘
                                                          │
