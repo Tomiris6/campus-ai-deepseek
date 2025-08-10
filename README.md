@@ -163,7 +163,7 @@ RAG_architecture/
 ### **Intelligent Query Processing**
 ```javascript
 // Multi-query generation for complex questions
-"What is the mission of the school and what activities are available?"
+"What is the mission of the school, and what activities are available?"
 // Automatically splits into:
 // 1. "What is the mission of the school?"
 // 2. "What extracurricular activities are available?"
@@ -219,18 +219,6 @@ CREATE TABLE knowledge_base (
 );
 ```
 
-## 🚀 Usage Examples
-
-### **Basic Chat Query**
-```bash
-curl -X POST http://localhost:3000/api/chat \
-  -H "Content-Type: application/json" \
-  -d '{
-    "messages": [
-      {"role": "user", "content": "What are the school facilities?"}
-    ]
-  }'
-```
 
 ### **Running Components Separately**
 
@@ -396,11 +384,6 @@ python-dotenv>=0.19.0
 4. Push to the branch: `git push origin feature/amazing-feature`
 5. Open a Pull Request
 
-## 📄 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
 
 ---
 
-**🎓 Developed as part of the Campus AI Digital Human Project internship**  
-**🚀 RAG Architecture Implementation by the Development Team**
