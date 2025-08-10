@@ -3,26 +3,25 @@
 
 <head>
     <meta charset="UTF-8" />
-    <title>ScanInfinity Platform</title>
+    <title>HeyGen-style Dashboard with Campus Bot Chat</title>
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <style>
         :root {
             --bg: #0e0e0e;
             --panel: #151515;
             --card: #1e1e1e;
-            --accent: #0066ff;
+            --accent: #4F6BFE;
             --text: #ffffff;
             --sub: #a0a0a0;
             --radius: 12px;
-            --glow: 0 0 12px var(--accent);
-            --ease: cubic-bezier(.25, .8, .25, 1);
+            --transition: 0.3s ease;
         }
 
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto;
         }
 
         body {
@@ -30,10 +29,27 @@
             color: var(--text);
             display: flex;
             height: 100vh;
-            overflow: hidden
+            overflow: hidden;
         }
 
-        /* ---------- sidebar ---------- */
+        /* Blur overlay behind chatbot */
+        #blur-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(15, 15, 15, 0.3);
+            backdrop-filter: blur(6px);
+            z-index: 1400;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity var(--transition);
+        }
+
+        #blur-overlay.active {
+            pointer-events: auto;
+            opacity: 1;
+        }
+
+        /* Sidebar */
         .sidebar {
             width: 240px;
             background: var(--panel);
@@ -42,12 +58,28 @@
             flex-direction: column;
             gap: 8px;
             overflow-y: auto;
+            transition: transform var(--transition);
+        }
+
+        .sidebar:hover {
+            transform: translateX(0);
+            /* Already visible, but can add subtle effects */
         }
 
         .logo {
             font-size: 20px;
             font-weight: 700;
             padding: 0 24px 16px;
+            opacity: 0;
+            transform: translateY(-10px);
+            animation: fadeInDown 0.5s forwards;
+        }
+
+        @keyframes fadeInDown {
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
 
         .nav-link {
@@ -58,81 +90,70 @@
             color: var(--sub);
             text-decoration: none;
             font-size: 14px;
-            transition: .2s;
-            position: relative;
+            transition: var(--transition);
+            opacity: 0;
+            transform: translateY(10px);
+            animation: fadeInUp 0.5s forwards;
         }
 
-        .nav-link::before {
-            content: '';
-            position: absolute;
-            left: 0;
-            top: 0;
-            bottom: 0;
-            width: 3px;
-            background: var(--accent);
-            transform: scaleY(0);
-            transition: transform .2s var(--ease);
+        .nav-link:nth-child(2) {
+            animation-delay: 0.1s;
+        }
+
+        .nav-link:nth-child(3) {
+            animation-delay: 0.2s;
+        }
+
+        .nav-link:nth-child(4) {
+            animation-delay: 0.3s;
+        }
+
+        .nav-link:nth-child(5) {
+            animation-delay: 0.4s;
+        }
+
+        .nav-link:nth-child(6) {
+            animation-delay: 0.5s;
+        }
+
+        @keyframes fadeInUp {
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
 
         .nav-link:hover,
         .nav-link.active {
             color: var(--text);
             background: #222;
-        }
-
-        .nav-link.active::before {
-            transform: scaleY(1)
+            transform: translateX(5px);
         }
 
         .nav-link svg {
             width: 18px;
-            height: 18px
+            height: 18px;
+            transition: transform var(--transition);
         }
 
-        kbd {
-            font-size: 11px;
-            border: 1px solid #333;
-            padding: 2px 4px;
-            border-radius: 3px;
-            color: var(--sub);
-            margin-left: auto;
+        .nav-link:hover svg {
+            transform: rotate(10deg);
         }
 
+        /* Main content */
         main {
             flex: 1;
             padding: 32px 40px;
             overflow-y: auto;
+            position: relative;
         }
 
         h1 {
             font-size: 28px;
-            margin-bottom: 24px
-        }
-
-        .search-box {
             margin-bottom: 24px;
-            position: relative;
-        }
-
-        .search-box input {
-            width: 100%;
-            max-width: 320px;
-            background: var(--card);
-            border: none;
-            border-radius: var(--radius);
-            padding: 10px 16px 10px 38px;
-            color: var(--text);
-            font-size: 14px;
-        }
-
-        .search-box svg {
-            position: absolute;
-            left: 12px;
-            top: 50%;
-            transform: translateY(-50%);
-            width: 16px;
-            height: 16px;
-            color: var(--sub);
+            opacity: 0;
+            transform: translateY(-20px);
+            animation: fadeInDown 0.6s forwards 0.3s;
         }
 
         .grid {
@@ -149,35 +170,53 @@
             flex-direction: column;
             gap: 12px;
             cursor: pointer;
-            transition: .25s var(--ease);
-            position: relative;
-            overflow: hidden;
+            transition: transform var(--transition), background var(--transition), box-shadow var(--transition);
+            user-select: none;
+            opacity: 0;
+            transform: scale(0.95);
+            animation: cardFadeIn 0.5s forwards;
         }
 
-        .card::after {
-            content: '';
-            position: absolute;
-            inset: 0;
-            border-radius: var(--radius);
-            box-shadow: 0 0 0 1px transparent;
-            transition: box-shadow .2s var(--ease);
+        .card:nth-child(1) {
+            animation-delay: 0.4s;
+        }
+
+        .card:nth-child(2) {
+            animation-delay: 0.5s;
+        }
+
+        .card:nth-child(3) {
+            animation-delay: 0.6s;
+        }
+
+        .card:nth-child(4) {
+            animation-delay: 0.7s;
+        }
+
+        .card:nth-child(5) {
+            animation-delay: 0.8s;
+        }
+
+        @keyframes cardFadeIn {
+            to {
+                opacity: 1;
+                transform: scale(1);
+            }
         }
 
         .card:hover {
-            transform: translateY(-4px);
-        }
-
-        .card:hover::after {
-            box-shadow: 0 0 0 1px var(--accent), var(--glow);
+            transform: translateY(-4px) scale(1.02);
+            background: #252525;
+            box-shadow: 0 4px 12px rgba(79, 107, 254, 0.2);
         }
 
         .card h3 {
-            font-size: 18px
+            font-size: 18px;
         }
 
         .card p {
             font-size: 14px;
-            color: var(--sub)
+            color: var(--sub);
         }
 
         .card-icon {
@@ -188,509 +227,463 @@
             display: grid;
             place-items: center;
             font-size: 22px;
-            transition: transform .2s var(--ease);
+            transition: transform var(--transition);
         }
 
         .card:hover .card-icon {
-            transform: scale(1.1)
+            transform: rotate(360deg);
         }
 
-        /* ---------- project section ---------- */
-        .project-section {
+        /* Card click animation */
+        @keyframes cardClickAnim {
+            0% {
+                transform: translateY(-4px) scale(1.02);
+                background: #252525;
+            }
+
+            50% {
+                transform: translateY(-2px) scale(0.98);
+                background: #1b1b1b;
+            }
+
+            100% {
+                transform: translateY(-4px) scale(1.02);
+                background: #252525;
+            }
+        }
+
+        .card.click-animate {
+            animation: cardClickAnim 0.3s ease forwards;
+        }
+
+        /* Floating Chat Window (centered, big, square) */
+        #chatbot-container {
+            position: fixed;
+            width: 600px;
+            height: 600px;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) scale(0.9);
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 6px 24px rgba(0, 0, 0, 0.6);
             display: none;
             flex-direction: column;
-            gap: 16px;
+            z-index: 1500;
+            overflow: hidden;
+            color: black;
+            font-family: 'Poppins', sans-serif;
+            opacity: 0;
+            transition: transform var(--transition), opacity var(--transition);
         }
 
-        .project-section.active {
+        #chatbot-container.active {
             display: flex;
+            transform: translate(-50%, -50%) scale(1);
+            opacity: 1;
         }
 
-        .input-group {
+        /* Chat header */
+        #chatbot-header {
+            background: var(--accent);
+            color: white;
+            padding: 12px 16px;
+            font-weight: 600;
+            user-select: none;
             display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
-
-        .input-group label {
-            font-size: 14px;
-            color: var(--sub);
-        }
-
-        .input-group input,
-        .input-group textarea {
-            background: var(--card);
-            border: none;
-            border-radius: var(--radius);
-            padding: 10px;
-            color: var(--text);
-            font-size: 14px;
-            resize: vertical;
-        }
-
-        .input-group textarea {
-            min-height: 100px;
-        }
-
-        /* ---------- recent ---------- */
-        .recent {
-            margin-top: 40px
-        }
-
-        .recent h2 {
-            font-size: 20px;
-            margin-bottom: 16px
-        }
-
-        .strip {
-            display: flex;
-            gap: 16px;
-            overflow-x: auto;
-            padding-bottom: 8px;
-        }
-
-        .thumb {
-            flex: 0 0 240px;
-            height: 140px;
-            background: var(--card);
-            border-radius: var(--radius);
-            background-size: cover;
-            background-position: center;
-            position: relative;
-            cursor: pointer;
-            transition: .25s var(--ease);
-        }
-
-        .thumb:hover {
-            transform: translateY(-3px);
-            box-shadow: var(--glow);
-        }
-
-        .thumb .badge {
-            position: absolute;
-            bottom: 8px;
-            left: 8px;
-            background: #0009;
-            color: #fff;
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-size: 12px;
-        }
-
-        ::-webkit-scrollbar {
-            width: 6px;
-            height: 6px
-        }
-
-        ::-webkit-scrollbar-thumb {
-            background: #333;
-            border-radius: 3px
-        }
-
-        /* ---------- chatbot ---------- */
-        .chatbot-widget {
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            display: flex;
-            flex-direction: column;
+            justify-content: space-between;
             align-items: center;
-            z-index: 1000;
+            transition: background var(--transition);
         }
 
-        .chatbot-bubble {
-            background: #f0faff;
-            border-radius: 20px;
-            padding: 15px;
-            width: 280px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-            border: 1px solid #00ff00;
-            margin-bottom: 10px;
+        #chatbot-header:hover {
+            background: #3559c3;
+        }
+
+        #chatbot-header button {
+            background: transparent;
+            border: none;
+            color: white;
+            font-size: 24px;
+            cursor: pointer;
+            font-weight: bold;
+            line-height: 1;
+            padding: 0;
+            margin: 0;
+            transition: transform var(--transition);
+        }
+
+        #chatbot-header button:hover {
+            transform: rotate(90deg);
+        }
+
+        /* Chat content */
+        #chatbot-content {
+            flex: 1;
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            overflow-y: auto;
+            background: #f5f7ff;
             color: black;
         }
 
-        .bubble-header {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .bubble-icon {
-            width: 40px;
-            height: 40px;
-            border-radius: 50%;
-        }
-
-        .bubble-text p {
-            margin: 0;
-        }
-
-        .bubble-text p:first-child {
-            font-size: 16px;
-            font-weight: bold;
-        }
-
-        .bubble-text p:last-child {
-            font-size: 14px;
-        }
-
-        .chat-button {
-            background: black;
-            color: white;
-            border: none;
-            padding: 10px 15px;
-            border-radius: 25px;
-            display: flex;
-            align-items: center;
-            gap: 5px;
-            width: 100%;
-            justify-content: center;
-            cursor: pointer;
-            margin-top: 10px;
-            font-size: 14px;
-        }
-
-        .powered-by {
-            font-size: 12px;
-            color: gray;
-            text-align: center;
-            margin-top: 5px;
-        }
-
-        .minimize-circle {
-            width: 50px;
-            height: 50px;
-            background: #00cc00;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
-        }
-
-        .minimize-circle svg {
-            transition: transform 0.3s;
-        }
-
-        .minimize-up svg {
-            transform: rotate(180deg);
-        }
-
-        .chatbot-popup {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.9);
-            z-index: 1001;
-        }
-
-        .chatbot-popup.active {
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-        }
-
-        .chatbot-container {
-            background: #fff;
-            width: 80%;
-            max-width: 600px;
-            height: 80%;
-            border-radius: var(--radius);
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-        }
-
-        .chatbot-header {
-            background: #00cc00;
-            padding: 10px 20px;
-            color: #fff;
-            font-size: 18px;
-            font-weight: 600;
-        }
-
-        .chatbot-messages {
-            flex: 1;
-            padding: 20px;
-            overflow-y: auto;
-            background: #f9f9f9;
-        }
-
-        .chatbot-input {
-            padding: 10px;
-            background: #fff;
-            border-top: 1px solid #ddd;
-        }
-
-        .chatbot-input input {
-            width: 100%;
-            padding: 10px;
-            border: 1px solid #ccc;
-            border-radius: 5px;
-            font-size: 14px;
-        }
-
         .message {
-            margin-bottom: 10px;
-            padding: 10px;
-            border-radius: 5px;
+            opacity: 0;
+            transform: translateY(10px);
+            animation: messageFadeIn 0.4s forwards;
         }
 
-        .message.bot {
-            background: #e0f7e0;
-            text-align: left;
+        @keyframes messageFadeIn {
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
 
-        .message.user {
-            background: #d9e6ff;
-            text-align: right;
+        .answer-section {
+            background: #e6eafe80;
+            padding: 0.5rem;
+            border-radius: 0.5rem 0.5rem 0.5rem 0;
+            width: fit-content;
+            flex-direction: column;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            color: black;
+            max-width: 80%;
+        }
+
+        .question-section {
+            background: var(--accent);
+            color: white;
+            padding: 0.5rem;
+            width: fit-content;
+            border-radius: 0.5rem 0.5rem 0 0.5rem;
             margin-left: auto;
+            overflow-wrap: anywhere;
+            max-width: 80%;
+        }
+
+        /* Typing indicator */
+        .typing-indicator {
+            display: flex;
+            gap: 0.25rem;
+        }
+
+        .typing-dot {
+            width: 6px;
+            height: 6px;
+            background: var(--sub);
+            border-radius: 50%;
+            animation: typingBounce 1.2s infinite;
+        }
+
+        .typing-dot:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .typing-dot:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+
+        @keyframes typingBounce {
+
+            0%,
+            80%,
+            100% {
+                transform: translateY(0);
+            }
+
+            40% {
+                transform: translateY(-5px);
+            }
+        }
+
+        /* Chat input form */
+        #chatbot-form {
+            display: flex;
+            gap: 0.75rem;
+            padding: 1rem;
+            border-top: 1px solid #ccc;
+            background: #f0f0f8;
+        }
+
+        #chatbot-input {
+            flex: 1;
+            outline: none;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            padding: 0.5rem 0.75rem;
+            font-size: 1rem;
+            transition: border-color var(--transition);
+        }
+
+        #chatbot-input:focus {
+            border-color: var(--accent);
+        }
+
+        #chatbot-send {
+            background: var(--accent);
+            border: none;
+            border-radius: 50%;
+            width: 44px;
+            height: 44px;
+            cursor: pointer;
+            font-size: 20px;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background var(--transition), transform var(--transition);
+        }
+
+        #chatbot-send:hover {
+            background: #3559c3;
+            transform: scale(1.1);
         }
     </style>
 </head>
 
 <body>
+    <div id="blur-overlay"></div>
+
     <aside class="sidebar">
-        <div class="logo">ScanInfinity</div>
-        <a class="nav-link active" data-key="h">
+        <div class="logo">HeyGen</div>
+
+        <a class="nav-link active" href="#">
             <svg fill="currentColor" viewBox="0 0 24 24">
                 <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" />
             </svg>
-            Home <kbd>H</kbd>
+            Home
         </a>
-        <a class="nav-link" data-key="p" id="projects-link">
+        <a class="nav-link" href="#">
             <svg fill="currentColor" viewBox="0 0 24 24">
                 <path
                     d="M19 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z" />
             </svg>
-            Projects <kbd>P</kbd>
+            Projects
         </a>
-        <a class="nav-link" data-key="t">
+        <a class="nav-link" href="#">
             <svg fill="currentColor" viewBox="0 0 24 24">
                 <path d="M12 2l2.4 7.2H22l-6 4.8 2.4 7.2L12 17.2 5.6 21.2 8 14 2 9.2h7.6L12 2z" />
             </svg>
-            Templates <kbd>T</kbd>
+            Templates
         </a>
-        <a class="nav-link" data-key="a">
+        <a class="nav-link" href="#">
             <svg fill="currentColor" viewBox="0 0 24 24">
                 <path
                     d="M12 12c2.2 0 4-1.8 4-4s-1.8-4-4-4-4 1.8-4 4 1.8 4 4 4zm0 2c-2.7 0-8 1.3-8 4v2h16v-2c0-2.7-5.3-4-8-4z" />
             </svg>
-            Avatars <kbd>A</kbd>
+            Avatars
         </a>
-        <a class="nav-link" data-key="v">
+        <a class="nav-link" href="#">
             <svg fill="currentColor" viewBox="0 0 24 24">
                 <path d="M12 3v10.55c-.6-.34-1.28-.55-2-.55-2.2 0-4 1.8-4 4s1.8 4 4 4 4-1.8 4-4V7h4V3h-6z" />
             </svg>
-            AI Voice <kbd>V</kbd>
+            AI Voice
         </a>
     </aside>
 
     <main>
         <h1>What would you like to create?</h1>
 
-        <div class="search-box">
-            <svg fill="currentColor" viewBox="0 0 24 24">
-                <path
-                    d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" />
-            </svg>
-            <input id="search" type="text" placeholder="Type to filter…" />
-        </div>
-
-        <div class="grid" id="cards">
-            <div class="card" data-tags="avatar clone look voice">
+        <div class="grid">
+            <div class="card" onclick="alert('Redirect → Avatar generator')">
                 <div class="card-icon">🎭</div>
                 <h3>Create Your Avatar</h3>
-                <p>Build a digital clone that mirrors your look & voice.</p>
+                <p>Build a digital clone that mirrors your look &amp; voice.</p>
             </div>
-
-            <div class="card" data-tags="avatar prompt generate">
+            <div class="card" onclick="alert('Redirect → Generate avatar with prompt')">
                 <div class="card-icon">✨</div>
                 <h3>Generate an Avatar</h3>
                 <p>Type a prompt and get a brand-new avatar instantly.</p>
             </div>
-
-            <div class="card" data-tags="video studio script edit produce">
+            <div class="card" onclick="alert('Redirect → Full video studio')">
                 <div class="card-icon">🎬</div>
                 <h3>Create a Video</h3>
                 <p>Script, edit and produce videos with avatars.</p>
             </div>
-
-            <div class="card" data-tags="ugc user content scale">
+            <div class="card" onclick="alert('Redirect → UGC wizard')">
                 <div class="card-icon">📹</div>
                 <h3>Create UGC</h3>
                 <p>Generate authentic user-generated content at scale.</p>
             </div>
+
+            <!-- New Chat with Campus Bot card -->
+            <div class="card" id="chatbot-card" style="background: #2451B7; color: white;">
+                <div class="card-icon">🤖</div>
+                <h3>Chat with Campus Bot</h3>
+                <p>Ask questions and get instant answers.</p>
+            </div>
         </div>
-
-        <!-- Project Section -->
-        <section class="project-section" id="project-section">
-            <h1>Assistant</h1>
-            <div class="input-group">
-                <label>Name</label>
-                <input type="text" placeholder="Type your name..." />
-            </div>
-            <div class="input-group">
-                <label>Opening Intro</label>
-                <textarea placeholder="Type your opening intro..."></textarea>
-            </div>
-            <div class="input-group">
-                <label>Useful links</label>
-                <input type="text" placeholder="Paste relevant URLs..." />
-            </div>
-            <div class="input-group">
-                <label>Full prompt</label>
-                <textarea placeholder="Type your full prompt..."></textarea>
-            </div>
-        </section>
-
-        <section class="recent">
-            <h2>Recent creations</h2>
-            <div class="strip" id="recent-strip">
-            </div>
-        </section>
     </main>
 
-    <!-- Chatbot Widget -->
-    <div class="chatbot-widget" id="chatbot-widget">
-        <div class="chatbot-bubble" id="chatbot-bubble">
-            <div class="bubble-header">
-                <img src="https://i.imgur.com/0x1zQ1f.png" alt="Chatbot Icon" class="bubble-icon">
-                <div class="bubble-text">
-                    <p>Hi there!</p>
-                    <p>How can I help you?</p>
-                </div>
+    <!-- Floating Chat Window with your current chatbot UI -->
+    <div id="chatbot-container" role="dialog" aria-modal="true" aria-hidden="true">
+        <div id="chatbot-header">
+            Campus AI Bot
+            <button id="chatbot-close" aria-label="Close Chatbot">&times;</button>
+        </div>
+
+        <div id="chatbot-content">
+            <div class="answer-section message" id="answerStart">
+                Hello! How can I help you?
             </div>
-            <button id="chat-button" class="chat-button">
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="white" class="bi bi-whatsapp"
-                    viewBox="0 0 16 16">
-                    <path
-                        d="M13.601 2.326A7.85 7.85 0 0 0 7.994 0C3.627 0 .068 3.558.064 7.926c0 1.399.366 2.76 1.057 3.965L0 16l4.204-1.102a7.9 7.9 0 0 0 3.79.965h.004c4.368 0 7.926-3.558 7.93-7.93A7.9 7.9 0 0 0 13.6 2.326zM7.994 14.521a6.6 6.6 0 0 1-3.356-.92l-.24-.144-2.494.654.666-2.433-.156-.251a6.56 6.56 0 0 1-1.007-3.505c0-3.626 2.957-6.584 6.591-6.584a6.56 6.56 0 0 1 4.66 1.931 6.56 6.56 0 0 1 1.928 4.66c-.004 3.639-2.961 6.592-6.592 6.592m3.615-4.934c-.197-.099-1.17-.578-1.353-.646-.182-.065-.315-.099-.445.099-.133.197-.513.646-.627.775-.114.133-.232.148-.43.05-.197-.1-.836-.308-1.592-.985-.59-.525-.985-1.175-1.103-1.372-.114-.198-.011-.304.088-.403.087-.088.197-.232.296-.346.1-.114.133-.198.198-.33.065-.134.034-.248-.015-.347-.05-.099-.445-1.076-.612-1.47-.16-.389-.323-.335-.445-.34-.114-.007-.247-.007-.38-.007a.73.73 0 0 0-.529.247c-.182.198-.691.677-.691 1.654s.71 1.916.81 2.049c.098.133 1.394 2.132 3.383 2.992.47.205.84.326 1.129.418.475.152.904.129 1.246.08.38-.058 1.171-.48 1.338-.943.164-.464.164-.86.114-.943-.049-.084-.182-.133-.38-.232" />
-                </svg>
-                Chat with us >
-            </button>
+            <div class="question-section" style="display:none;"></div>
         </div>
-        <div class="minimize-circle" id="minimize-circle">
-            <svg fill="white" viewBox="0 0 24 24" width="24" height="24">
-                <path d="M7 10l5 5 5-5z" />
-            </svg>
-        </div>
+        <form id="chatbot-form" autocomplete="off">
+            <input id="chatbot-input" type="text" placeholder="Type message" aria-label="Message input" />
+            <button id="chatbot-send" type="submit" aria-label="Send message">➤</button>
+        </form>
     </div>
 
-    <!-- Chatbot Popup -->
-    <div class="chatbot-popup" id="chatbot-popup">
-        <div class="chatbot-container">
-            <div class="chatbot-header">Chat with us</div>
-            <div class="chatbot-messages" id="chatbot-messages">
-                <div class="message bot">Hi there! How can I help you?</div>
-            </div>
-            <div class="chatbot-input">
-                <input type="text" id="chatbot-input" placeholder="Type your message...">
-            </div>
-        </div>
-    </div>
-
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script>
-        /* ---------- live search ---------- */
-        const search = document.getElementById('search');
-        const cards = [...document.querySelectorAll('.card')];
-        search.addEventListener('input', () => {
-            const q = search.value.toLowerCase();
-            cards.forEach(c => {
-                const visible = c.dataset.tags.includes(q) || q === '';
-                c.style.display = visible ? 'flex' : 'none';
+        // Show/hide chatbot floating window and blur overlay
+        const chatbotCard = document.getElementById('chatbot-card');
+        const chatbotContainer = document.getElementById('chatbot-container');
+        const chatbotClose = document.getElementById('chatbot-close');
+        const chatbotInput = document.getElementById('chatbot-input');
+        const blurOverlay = document.getElementById('blur-overlay');
+
+        chatbotCard.addEventListener('click', () => {
+            chatbotContainer.classList.add('active');
+            chatbotContainer.setAttribute('aria-hidden', 'false');
+            chatbotInput.focus();
+
+            // show blur behind chatbot
+            blurOverlay.classList.add('active');
+
+            // Animate the card clicked
+            animateCardClick(chatbotCard);
+        });
+
+        chatbotClose.addEventListener('click', () => {
+            chatbotContainer.classList.remove('active');
+            chatbotContainer.setAttribute('aria-hidden', 'true');
+
+            // hide blur behind chatbot
+            blurOverlay.classList.remove('active');
+        });
+
+        // Animate all cards on click for realistic feedback
+        const cards = document.querySelectorAll('.card');
+        cards.forEach(card => {
+            card.addEventListener('click', () => {
+                animateCardClick(card);
             });
         });
 
-        /* ---------- keyboard nav ---------- */
-        document.addEventListener('keydown', e => {
-            const key = e.key.toLowerCase();
-            const link = document.querySelector(`.nav-link[data-key="${key}"]`);
-            if (link) link.click();
+        function animateCardClick(card) {
+            card.classList.add('click-animate');
+            card.addEventListener('animationend', () => {
+                card.classList.remove('click-animate');
+            }, { once: true });
+        }
+
+        // Chatbot logic (as in your original script)
+        const chatbotContent = document.getElementById('chatbot-content');
+        const chatbotSend = document.getElementById('chatbot-send');
+
+        let conversationHistory = [];
+        let isAnswerLoading = false;
+        let answerSectionId = 0;
+        const CONTEXT_LENGTH = 10;
+
+        chatbotSend.addEventListener('click', (e) => {
+            e.preventDefault();
+            handleSendMessage();
         });
 
-        /* ---------- dynamic recent items ---------- */
-        const recent = [
-            { bg: 'https://i.pravatar.cc/400?img=1', dur: '1:13 / 5:57' },
-            { bg: 'https://i.pravatar.cc/400?img=2', dur: '0:45' },
-            { bg: 'https://i.pravatar.cc/400?img=3', dur: '2:30' },
-            { bg: 'https://i.pravatar.cc/400?img=4', dur: '1:01' },
-            { bg: 'https://i.pravatar.cc/400?img=5', dur: '3:15' },
-            { bg: 'https://i.pravatar.cc/400?img=6', dur: '0:22' }
-        ];
-        const strip = document.getElementById('recent-strip');
-        strip.innerHTML = recent.map(r => `
-      <div class="thumb" style="background-image:url('${r.bg}')">
-        <span class="badge">${r.dur}</span>
-      </div>
-    `).join('');
-
-        /* ---------- project section toggle ---------- */
-        const homeLink = document.querySelector('.nav-link[data-key="h"]');
-        const projectsLink = document.getElementById('projects-link');
-        const projectSection = document.getElementById('project-section');
-        projectsLink.addEventListener('click', () => {
-            projectSection.classList.add('active');
-            document.querySelectorAll('.grid, .recent').forEach(el => el.style.display = 'none');
-        });
-        homeLink.addEventListener('click', () => {
-            projectSection.classList.remove('active');
-            document.querySelectorAll('.grid, .recent').forEach(el => el.style.display = 'flex');
-        });
-
-        /* ---------- chatbot functionality ---------- */
-        const chatbotBubble = document.getElementById('chatbot-bubble');
-        const minimizeCircle = document.getElementById('minimize-circle');
-        const chatButton = document.getElementById('chat-button');
-        const chatbotPopup = document.getElementById('chatbot-popup');
-        const chatbotMessages = document.getElementById('chatbot-messages');
-        const chatbotInput = document.getElementById('chatbot-input');
-
-        minimizeCircle.addEventListener('click', () => {
-            if (chatbotBubble.style.display !== 'none') {
-                chatbotBubble.style.display = 'none';
-                minimizeCircle.classList.add('minimize-up');
-            } else {
-                chatbotBubble.style.display = 'block';
-                minimizeCircle.classList.remove('minimize-up');
+        chatbotInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                handleSendMessage();
             }
         });
 
-        chatButton.addEventListener('click', () => {
-            chatbotPopup.classList.add('active');
-        });
+        function handleSendMessage() {
+            const question = chatbotInput.value.trim();
+            if (question === '' || isAnswerLoading) return;
 
-        chatbotPopup.addEventListener('click', (e) => {
-            if (e.target === chatbotPopup) {
-                chatbotPopup.classList.remove('active');
-            }
-        });
+            sendButtonDisable(true);
+            addQuestionSection(question);
+            chatbotInput.value = '';
+        }
 
-        chatbotInput.addEventListener('keypress', async (e) => {
-            if (e.key === 'Enter' && chatbotInput.value.trim()) {
-                const userMessage = chatbotInput.value.trim();
-                chatbotMessages.innerHTML += `<div class="message user">${userMessage}</div>`;
-                chatbotInput.value = '';
-                chatbotMessages.scrollTop = chatbotMessages.scrollHeight;
+        function sendButtonDisable(state) {
+            chatbotSend.disabled = state;
+            chatbotSend.style.opacity = state ? '0.4' : '1';
+            chatbotSend.style.cursor = state ? 'not-allowed' : 'pointer';
+        }
 
-                // Simulate server response (replace with actual API call)
-                const response = await fetch('http://localhost:3000/', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        messages: [{ role: 'user', content: userMessage }]
-                    })
+        function getAnswer(question) {
+            conversationHistory.push({ role: "user", content: question });
+            const limitedHistory = conversationHistory.slice(-CONTEXT_LENGTH * 2);
+
+            fetch("http://localhost:3000/api/chat", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ messages: limitedHistory })
+            })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! Status: ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    const resultData = data.response;
+                    conversationHistory.push({ role: "assistant", content: resultData });
+                    updateAnswerSection(resultData);
+                    isAnswerLoading = false;
+                })
+                .catch(error => {
+                    updateAnswerSection("Sorry, an error occurred with the server. Please try again.");
+                    isAnswerLoading = false;
+                })
+                .finally(() => {
+                    sendButtonDisable(false);
+                    scrollToBottom();
                 });
-                const data = await response.json();
-                chatbotMessages.innerHTML += `<div class="message bot">${data.response}</div>`;
-                chatbotMessages.scrollTop = chatbotMessages.scrollHeight;
+        }
+
+        function addQuestionSection(message) {
+            isAnswerLoading = true;
+            const questionEl = document.createElement('div');
+            questionEl.className = 'question-section message';
+            questionEl.textContent = message;
+            chatbotContent.appendChild(questionEl);
+
+            answerSectionId++;
+            const answerEl = document.createElement('div');
+            answerEl.className = 'answer-section message';
+            answerEl.id = `answer-${answerSectionId}`;
+            const typingIndicator = document.createElement('div');
+            typingIndicator.className = 'typing-indicator';
+            for (let i = 0; i < 3; i++) {
+                const dot = document.createElement('div');
+                dot.className = 'typing-dot';
+                typingIndicator.appendChild(dot);
             }
-        });
+            answerEl.appendChild(typingIndicator);
+            chatbotContent.appendChild(answerEl);
+
+            getAnswer(message);
+            scrollToBottom();
+        }
+
+        function updateAnswerSection(message) {
+            const answerSectionElement = document.getElementById(`answer-${answerSectionId}`);
+            if (answerSectionElement) {
+                answerSectionElement.innerHTML = marked.parse(message);
+            }
+        }
+
+        function scrollToBottom() {
+            chatbotContent.scrollTo({ top: chatbotContent.scrollHeight, behavior: 'smooth' });
+        }
     </script>
 </body>
 
