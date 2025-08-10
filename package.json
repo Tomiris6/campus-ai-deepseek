@@ -11,6 +11,7 @@
     },
     "dependencies": {
         "@dqbd/tiktoken": "^1.0.21",
+        "animejs": "^4.1.2",
         "axios": "^1.5.0",
         "cheerio": "^1.0.0-rc.12",
         "compression": "^1.7.4",

@@ -8,6 +8,6 @@ __pycache__/
 node_modules/
 
 # Custom directory or file
-before_perplexity/
+before_update/
 .DS_Store
 

@@ -5,7 +5,13 @@ require('dotenv').config();
 const { Pool } = require('pg');
 const fetch = require('node-fetch');
 
-// Database configuration
+// ---------- Config ----------
+const OLLAMA_EMBEDDING_MODEL = process.env.OLLAMA_EMBEDDING_MODEL || 'bge-large';
+const OLLAMA_API_URL = process.env.OLLAMA_API_URL || 'http://localhost:11434';
+const VERBOSE = String(process.env.VERBOSE || 'true').toLowerCase() === 'true';
+const MAX_ERROR_BODY_PREVIEW = 300;
+
+// ---------- DB ----------
 const pool = new Pool({
     user: process.env.DB_USER,
     host: process.env.DB_HOST,
@@ -15,28 +21,59 @@ const pool = new Pool({
 });
 
 pool.on('connect', () => {
-    console.log('Database connected successfully for embedding script.');
+    logHeader('Database connected successfully for embedding script.');
 });
 
 pool.on('error', (err) => {
-    console.error('Unexpected error on idle client', err);
+    logError('Unexpected error on idle client', err);
     process.exit(1);
 });
 
-// Ollama embedding config
-const OLLAMA_EMBEDDING_MODEL = 'bge-large';
-const OLLAMA_API_URL = 'http://localhost:11434';
+// ---------- Utils ----------
+function divider(label) {
+    const line = '─'.repeat(40);
+    return label ? `${line} ${label} ${line}` : `${line}${line}`;
+}
 
+function preview(text, len = 80) {
+    if (!text) return 'N/A';
+    const s = String(text).replace(/\s+/g, ' ').trim();
+    return s.length > len ? s.slice(0, len - 1) + '…' : s;
+}
+
+function logHeader(msg) {
+    console.log('\n' + divider(msg));
+}
+
+function logInfo(...args) {
+    console.log('ℹ️ ', ...args);
+}
+
+function logSuccess(...args) {
+    console.log('✅', ...args);
+}
+
+function logWarn(...args) {
+    console.warn('⚠️ ', ...args);
+}
+
+function logError(msg, err) {
+    console.error('❌', msg, err ? `\n   → ${err.stack || err}` : '');
+}
+
+function hrtimeMs(start) {
+    const diff = process.hrtime(start);
+    return Math.round((diff[0] * 1e9 + diff[1]) / 1e6);
+}
+
+// ---------- Embeddings ----------
 async function generateEmbedding(text) {
-    const payload = {
-        model: OLLAMA_EMBEDDING_MODEL,
-        prompt: text,
-    };
-
+    const payload = { model: OLLAMA_EMBEDDING_MODEL, prompt: text };
     const maxRetries = 3;
     const retryDelay = 1000;
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        const tStart = process.hrtime();
         try {
             const response = await fetch(`${OLLAMA_API_URL}/api/embeddings`, {
                 method: 'POST',
@@ -45,45 +82,62 @@ async function generateEmbedding(text) {
                 timeout: 15000,
             });
 
+            const ms = hrtimeMs(tStart);
+
             if (!response.ok) {
                 const errorBody = await response.text();
-                throw new Error(`Ollama API error: ${response.status} ${response.statusText}. Response body: ${errorBody}`);
+                const previewBody = preview(errorBody, MAX_ERROR_BODY_PREVIEW);
+                throw new Error(`Ollama API error: ${response.status} ${response.statusText} (${ms} ms). Body: ${previewBody}`);
             }
 
             const data = await response.json();
-            if (!data.embedding) {
-                throw new Error('No embedding returned in response');
+            if (!data || !data.embedding) {
+                throw new Error(`No embedding returned in response (${ms} ms)`);
             }
+
+            if (VERBOSE) logSuccess(`Embedding generated in ${ms} ms (dim: ${data.embedding.length || 'unknown'})`);
             return data.embedding;
         } catch (err) {
-            console.warn(`Attempt ${attempt} failed to generate embedding: ${err.message}`);
-            if (attempt === maxRetries) {
-                throw err;
-            }
-            await new Promise(resolve => setTimeout(resolve, retryDelay));
+            logWarn(`Attempt ${attempt}/${maxRetries} failed to generate embedding: ${err.message}`);
+            if (attempt === maxRetries) throw err;
+            await new Promise(resolve => setTimeout(resolve, retryDelay * attempt));
         }
     }
 }
 
+// ---------- Main ----------
 async function processPages() {
     let client;
+    const totals = { pages: 0, embedded: 0, failed: 0, skipped: 0 };
+    const tGlobal = process.hrtime();
+
     try {
         client = await pool.connect();
 
-        console.log('Starting embedding process for pages...');
+        logHeader('Starting embedding process for pages');
+        console.time('Total runtime');
 
+        const tFetch = process.hrtime();
         const res = await client.query('SELECT url, title, h1_tags, h2_tags, h3_tags, content FROM pages');
-        if (res.rows.length === 0) {
-            console.log('No pages found. Exiting.');
+        const fetchMs = hrtimeMs(tFetch);
+
+        totals.pages = res.rows.length;
+
+        if (totals.pages === 0) {
+            logWarn(`No pages found (query took ${fetchMs} ms). Exiting.`);
             return;
         }
 
-        console.log(`Found ${res.rows.length} pages to process.`);
+        logInfo(`Found ${totals.pages} pages (fetched in ${fetchMs} ms).`);
 
+        const tTruncate = process.hrtime();
         await client.query('TRUNCATE TABLE knowledge_base RESTART IDENTITY');
-        console.log('Cleared knowledge_base table.');
+        logInfo(`Cleared knowledge_base table in ${hrtimeMs(tTruncate)} ms.`);
 
-        for (const page of res.rows) {
+        for (let i = 0; i < res.rows.length; i++) {
+            const page = res.rows[i];
+            const idx = i + 1;
+
             const contentParts = [
                 `Title: ${page.title || 'N/A'}.`,
                 `H1 Tags: ${page.h1_tags || 'N/A'}.`,
@@ -93,32 +147,67 @@ async function processPages() {
             ];
             const contentText = contentParts.join('\n');
 
-            try {
-                const embedding = await generateEmbedding(contentText);
+            const charCount = contentText.length;
+            const emptyish = charCount < 5 || !/\w/.test(contentText);
 
+            logHeader(`Page ${idx}/${totals.pages}`);
+            logInfo(`URL: ${page.url || 'N/A'}`);
+            logInfo(`Title: ${preview(page.title, 100)}`);
+            logInfo(`Chars: ${charCount}${emptyish ? ' (empty-ish)' : ''}`);
+
+            if (emptyish) {
+                totals.skipped++;
+                logWarn('Skipping page due to insufficient content.');
+                continue;
+            }
+
+            try {
+                const tEmbed = process.hrtime();
+                const embedding = await generateEmbedding(contentText);
+                const embedMs = hrtimeMs(tEmbed);
+
+                const tInsert = process.hrtime();
                 await client.query(
                     `INSERT INTO knowledge_base (content_text, source_url, source_table, source_id, embedding)
-            VALUES ($1, $2, $3, $4, $5)`,
+                     VALUES ($1, $2, $3, $4, $5)`,
                     [contentText, page.url, 'pages', 'N/A', JSON.stringify(embedding)]
                 );
+                const insertMs = hrtimeMs(tInsert);
 
-                console.log(`Embedded and saved: ${page.url}`);
+                totals.embedded++;
+                logSuccess(`Embedded and saved (embed: ${embedMs} ms, insert: ${insertMs} ms).`);
             } catch (embedError) {
-                console.error(`Failed to embed page ${page.url}: ${embedError.message}`);
+                totals.failed++;
+                logError(`Failed to embed page ${page.url}`, embedError);
             }
         }
 
-        console.log('Finished embedding all pages.');
+        logHeader('Finished embedding all pages');
+
+        // Final report
+        const elapsedMs = hrtimeMs(tGlobal);
+        const report = {
+            totalPages: totals.pages,
+            embedded: totals.embedded,
+            failed: totals.failed,
+            skipped: totals.skipped,
+            elapsedMs
+        };
+
+        console.log(divider('Summary'));
+        console.table(report);
+        console.timeEnd('Total runtime');
     } catch (err) {
-        console.error('Unexpected error during embedding process:', err);
+        logError('Unexpected error during embedding process:', err);
     } finally {
         if (client) client.release();
         await pool.end();
+        logInfo('Database pool closed.');
     }
 }
 
-// Run the processing function when the script is executed
+// Run
 processPages().catch(e => {
-    console.error('Fatal error in embedding script:', e);
+    logError('Fatal error in embedding script:', e);
     process.exit(1);
 });
