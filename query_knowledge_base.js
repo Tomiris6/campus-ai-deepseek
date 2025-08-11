@@ -44,28 +44,21 @@ async function axiosPostWithRetries(url, data, headers, maxRetries = 3, baseDela
 }
 
 async function breakDownQuery(query) {
-    const prompt = `You are an expert query parser and refiner for a retrieval-augmented generation (RAG) system. Break down the user query into 3-4 specific, clear, answerable questions.
-- Ignore minor spelling or grammatical errors and focus on the meaning and intent.
-- Provide examples with numbered JSON arrays exactly matching the format.
-- Make each sub-question distinct, focused, and answerable independently.
-- Avoid vague or speculative sub-questions.
-
-**VERY IMPORTANT INSTRUCTION** 
-    - Format output very strictly as a **JSON** array of strings with no -->**extra text** <--.
+    const prompt = `Parse this user query into 3-4 specific sub-questions. Return ONLY a valid JSON array of strings with no additional text.
 
 Examples:
-1. "What is the mission of the school and what extracurricular activities are available?"
-JSON Output: ["What is the mission of the school?", "What extracurricular activities are available?"]
+Input: "What is the school mission and what clubs are available?"
+Output: ["What is the school mission?", "What clubs are available?"]
 
-2. "Who is the current principal and what extracurricular clubs exist?"
-JSON Output: ["Who is the current principal?", "What extracurricular clubs exist?"]
+Input: "Who is the principal and what are the admission requirements?"  
+Output: ["Who is the principal?", "What are the admission requirements?"]
 
-Now, generate the **----->JSON<-----** array for this user query:
 User Query: "${query}"
-JSON Output:`;
+Output:`;
+
 
     const payload = {
-        model: 'deepseek/deepseek-chat-v3-0324:free',
+        model: 'meta-llama/llama-3.2-3b-instruct:free',
         messages: [{ role: 'user', content: prompt }],
         max_tokens: 150,
         temperature: 0,
@@ -130,7 +123,7 @@ async function getEmbedding(text) {
 }
 
 
-async function getVectorContext(embedding, limit = 20) {
+async function getVectorContext(embedding, limit = 15) {
     try {
         const vectorRows = (await pool.query(
             `SELECT content_text, embedding <-> $1 AS distance
@@ -221,7 +214,7 @@ async function queryKnowledgeBase(userQuery) {
             console.log(`Embedding generated in ${(Date.now() - startEmbedding) / 1000}s`);
 
             const startRetrieve = Date.now();
-            const chunks = await getVectorContext(embedding, 20);
+            const chunks = await getVectorContext(embedding, 15);
             console.log(`Retrieved ${chunks.length} chunks in ${(Date.now() - startRetrieve) / 1000}s`);
 
             candidateChunks.push(...chunks);
@@ -233,7 +226,7 @@ async function queryKnowledgeBase(userQuery) {
     candidateChunks = Array.from(new Set(candidateChunks));
     console.log(`Total unique chunks from all sub-questions: ${candidateChunks.length}`);
 
-    const MAX_CONTEXT_TOKENS = 8000;
+    const MAX_CONTEXT_TOKENS = 16000;
     const RESERVED_TOKENS = 3000;
     const availableTokens = MAX_CONTEXT_TOKENS - RESERVED_TOKENS;
 
