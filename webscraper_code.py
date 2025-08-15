@@ -55,9 +55,11 @@ def create_tables(conn):
     try:
         with conn.cursor() as cursor:
             # Enhanced 'pages' table with better structure
+            # In the create_tables function
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS pages (
-                    url TEXT NOT NULL PRIMARY KEY,
+                    id SERIAL PRIMARY KEY,
+                    url TEXT NOT NULL UNIQUE,
                     scraped_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                     title TEXT,
                     content TEXT,
@@ -71,6 +73,7 @@ def create_tables(conn):
                     status TEXT DEFAULT 'success'
                 );
             """)
+
 
             # Knowledge base table for RAG embeddings (Aadib's approach)
             cursor.execute("""
@@ -108,32 +111,35 @@ def insert_data(conn, scraped_data):
     try:
         with conn.cursor() as cursor:
             cursor.execute("""
-                INSERT INTO pages (url, title, content, h1_tags, h2_tags, h3_tags, 
-                                 meta_description, meta_keywords, page_depth, status)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (url) DO UPDATE SET
-                    scraped_at = CURRENT_TIMESTAMP,
-                    title = EXCLUDED.title,
-                    content = EXCLUDED.content,
-                    h1_tags = EXCLUDED.h1_tags,
-                    h2_tags = EXCLUDED.h2_tags,
-                    h3_tags = EXCLUDED.h3_tags,
-                    meta_description = EXCLUDED.meta_description,
-                    meta_keywords = EXCLUDED.meta_keywords,
-                    page_depth = EXCLUDED.page_depth,
-                    status = EXCLUDED.status;
-            """, (
-                scraped_data['url'],
-                scraped_data['title'],
-                scraped_data['content'],
-                scraped_data.get('h1_tags', ''),
-                scraped_data.get('h2_tags', ''),
-                scraped_data.get('h3_tags', ''),
-                scraped_data.get('meta_description', ''),
-                scraped_data.get('meta_keywords', ''),
-                scraped_data.get('page_depth', 0),
-                scraped_data.get('status', 'success')
-            ))
+    INSERT INTO pages (url, title, content, h1_tags, h2_tags, h3_tags, 
+                     meta_description, meta_keywords, page_depth, retry_count, status)
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    ON CONFLICT (url) DO UPDATE SET
+        scraped_at = CURRENT_TIMESTAMP,
+        title = EXCLUDED.title,
+        content = EXCLUDED.content,
+        h1_tags = EXCLUDED.h1_tags,
+        h2_tags = EXCLUDED.h2_tags,
+        h3_tags = EXCLUDED.h3_tags,
+        meta_description = EXCLUDED.meta_description,
+        meta_keywords = EXCLUDED.meta_keywords,
+        page_depth = EXCLUDED.page_depth,
+        retry_count = EXCLUDED.retry_count,
+        status = EXCLUDED.status;
+""", (
+    scraped_data['url'],
+    scraped_data['title'],
+    scraped_data['content'],
+    scraped_data.get('h1_tags', ''),
+    scraped_data.get('h2_tags', ''),
+    scraped_data.get('h3_tags', ''),
+    scraped_data.get('meta_description', ''),
+    scraped_data.get('meta_keywords', ''),
+    scraped_data.get('page_depth', 0),
+    scraped_data.get('retry_count', 0),  # ADD THIS LINE
+    scraped_data.get('status', 'success')
+))
+
             conn.commit()
             logging.info(f"Successfully inserted/updated data for URL: {scraped_data['url']}")
     except psycopg2.Error as e:
@@ -277,6 +283,7 @@ def scrape_page_with_retry(driver, url, depth, conn, retry_count=0):
             'meta_description': meta_description_tag.get('content', '') if isinstance(meta_description_tag, Tag) else '',
             'meta_keywords': meta_keywords_tag.get('content', '') if isinstance(meta_keywords_tag, Tag) else '',
             'page_depth': depth,
+            'retry_count': retry_count,
             'status': 'success'
         }
         
@@ -285,7 +292,7 @@ def scrape_page_with_retry(driver, url, depth, conn, retry_count=0):
         return scraped_data, True
         
     except TimeoutException:
-        logging.warning(f"Timeout waiting for page to load on {url}.")
+        logging.warning(f"TimeoutException on {url} (Attempt {retry_count + 1}/{MAX_RETRIES}).")
         if retry_count < MAX_RETRIES:
             logging.info(f"Retrying {url} (attempt {retry_count + 1}/{MAX_RETRIES})")
             time.sleep(2)
@@ -308,7 +315,7 @@ def scrape_page_with_retry(driver, url, depth, conn, retry_count=0):
             return failed_data, False
             
     except Exception as e:
-        logging.error(f"Error scraping {url}: {e}")
+        logging.error(f"Error scraping {url} (Attempt {retry_count + 1}/{MAX_RETRIES}): {type(e).__name__} - {e}")
         if retry_count < MAX_RETRIES:
             logging.info(f"Retrying {url} (attempt {retry_count + 1}/{MAX_RETRIES})")
             time.sleep(2)
@@ -328,6 +335,7 @@ def scrape_page_with_retry(driver, url, depth, conn, retry_count=0):
             }
             insert_data(conn, failed_data)
             return failed_data, False
+
 
 
 def crawl_website():
@@ -359,6 +367,15 @@ def crawl_website():
 
         create_tables(pg_conn)
 
+        # --- NEW --- Configuration summary at startup
+        print("\n--- Scraping Configuration ---")
+        print(f"Start URL          : {START_URL}")
+        print(f"Domain             : {DOMAIN}")
+        print(f"Max Depth          : {MAX_DEPTH}")
+        print(f"Page Limit         : {'None' if PAGE_LIMIT == 0 else PAGE_LIMIT}")
+        print(f"JavaScript Enabled : {ENABLE_JAVASCRIPT}")
+        print("----------------------------\n")
+
         # Initialize WebDriver
         driver = get_driver()
         logging.info(f"WebDriver initialized with JavaScript {'enabled' if ENABLE_JAVASCRIPT else 'disabled'}.")
@@ -387,7 +404,8 @@ def crawl_website():
                     logging.critical("Failed to restart driver. Exiting.")
                     break
 
-            logging.info(f"Scraping ({pages_scraped_count}) at Depth {current_depth}: {normalized_url}")
+            logging.info(f"Scraping ({pages_scraped_count}) | Queue: {len(urls_to_visit)} | Depth: {current_depth} | URL: {normalized_url}")
+
 
             # Politeness delay
             time.sleep(random.uniform(MIN_DELAY_BETWEEN_PAGES, MAX_DELAY_BETWEEN_PAGES))
@@ -409,6 +427,7 @@ def crawl_website():
                 print("Meta Desc   : {}".format(meta_desc_preview or 'None'))
                 content_preview = (scraped_data['content'][:200] + '...') if len(scraped_data['content']) > 200 else scraped_data['content']
                 print("Content     :\n{}".format(content_preview or 'No content'))
+                print(f"Content Size  : {len(scraped_data['content'])} characters")
                 print("Page Time   : {:.2f} seconds".format(elapsed_time))
                 print("Status      : {}".format(scraped_data['status']))
                 print("Page Depth  : {}".format(scraped_data['page_depth']))
