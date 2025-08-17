@@ -4,12 +4,20 @@ require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
-const { queryKnowledgeBase, countTokens } = require('./query_knowledge_base');
+const { queryKnowledgeBase, cache, normalizeQuery, now, pruneSize, markUsed } = require('./query_knowledge_base'); // <-- MODIFIED: Removed countTokens
 const { Pool } = require('pg');
 const OpenAI = require('openai');
+const { encoding_for_model } = require('@dqbd/tiktoken'); // <-- ADDED for token counting
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// --- NEW --- Latency thresholds in milliseconds
+const LATENCY_THRESHOLDS = {
+  contextRetrieval: 5000,  // 5 seconds
+  llmGeneration: 20000,    // 20 seconds
+  totalProcessing: 25000   // 25 seconds
+};
 
 // ---------- Logging Helpers ----------
 function divider(label) {
@@ -41,6 +49,14 @@ function hrtimeMs(start) {
   const diff = process.hrtime(start);
   return Math.round((diff[0] * 1e9 + diff[1]) / 1e6);
 }
+
+// Function to count tokens
+const tokenizer = encoding_for_model('gpt-3.5-turbo');
+function countTokens(text) {
+  if (!text) return 0;
+  return tokenizer.encode(text).length;
+}
+
 
 // ---------- Middleware ----------
 app.use(cors());
@@ -83,7 +99,7 @@ app.get('/', (req, res) => {
 
 app.post('/api/chat', async (req, res) => {
   logHeader('New /api/chat request');
-  console.time('Total Chat Request Processing');
+  const tTotal = process.hrtime();
 
   try {
     const { messages } = req.body;
@@ -97,8 +113,14 @@ app.post('/api/chat', async (req, res) => {
 
     // Context Retrieval
     const tContext = process.hrtime();
-    const retrievedContextString = await queryKnowledgeBase(userMessage);
-    logInfo(`Context retrieval took ${hrtimeMs(tContext)} ms`);
+    const { context: retrievedContextString, embedding: queryEmbedding, key } = await queryKnowledgeBase(userMessage);
+    const contextMs = hrtimeMs(tContext);
+
+    if (contextMs > LATENCY_THRESHOLDS.contextRetrieval) {
+      logWarn(`Context retrieval took ${contextMs} ms (Threshold: ${LATENCY_THRESHOLDS.contextRetrieval} ms)`);
+    } else {
+      logInfo(`Context retrieval took ${contextMs} ms`);
+    }
 
     // Build system prompt
     let systemContent = `
@@ -149,9 +171,36 @@ Let me know if you have any other questions."
       temperature: 0.3,
       max_tokens: 1000,
     });
-    logInfo(`LLM response generation took ${hrtimeMs(tLLM)} ms`);
+    const llmMs = hrtimeMs(tLLM);
+
+    if (llmMs > LATENCY_THRESHOLDS.llmGeneration) {
+      logWarn(`LLM response generation took ${llmMs} ms (Threshold: ${LATENCY_THRESHOLDS.llmGeneration} ms)`);
+    } else {
+      logInfo(`LLM response generation took ${llmMs} ms`);
+    }
 
     const assistantResponse = response.choices[0].message.content;
+
+    // ** MODIFIED ** - Caching Logic is now consolidated here
+    const apologyPatterns = [
+      "i apologize", "i'm sorry", "sorry", "i do not have", "i don't have",
+      "don't have enough information", "not enough information", "i'm unable to find", "unable to",
+      "cannot answer", "no relevant information", "no information available",
+      "please contact the organization directly"
+    ];
+
+    const hasApology = apologyPatterns.some(pat => assistantResponse.toLowerCase().includes(pat));
+
+    if (!hasApology) {
+      pruneSize(); // Check for LRU pruning
+      cache.set(key, { value: assistantResponse, timestamp: now(), embedding: queryEmbedding });
+      markUsed(key); // Mark the new key as most recently used
+      logSuccess('✅ Cache set for key:', JSON.stringify(key), 'Cache size:', cache.size);
+    } else {
+      logWarn('⛔ Not caching apology/fallback message for key:', JSON.stringify(key));
+    }
+    // ** END MODIFIED **
+
     logSuccess('Chat processed successfully');
     res.json({ response: assistantResponse });
 
@@ -159,7 +208,8 @@ Let me know if you have any other questions."
     logError('Critical failure during chat processing', error);
     res.status(500).json({ error: 'An internal error occurred. Please try again later.' });
   } finally {
-    console.timeEnd('Total Chat Request Processing');
+    const totalMs = hrtimeMs(tTotal);
+    logInfo(`Total Chat Request Processing: ${totalMs} ms`);
   }
 });
 

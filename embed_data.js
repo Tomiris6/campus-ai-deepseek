@@ -4,6 +4,8 @@ require('dotenv').config();
 
 const { Pool } = require('pg');
 const fetch = require('node-fetch');
+const { RecursiveCharacterTextSplitter } = require('langchain/text_splitter');
+const { default: pLimit } = require('p-limit'); // --- NEW: Import the p-limit library ---
 
 // ---------- Config ----------
 const OLLAMA_EMBEDDING_MODEL = process.env.OLLAMA_EMBEDDING_MODEL || 'bge-large';
@@ -79,7 +81,7 @@ async function generateEmbedding(text) {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
-                timeout: 15000,
+                timeout: 20000,
             });
 
             const ms = hrtimeMs(tStart);
@@ -108,19 +110,18 @@ async function generateEmbedding(text) {
 // ---------- Main ----------
 async function processPages() {
     let client;
-    const totals = { pages: 0, embedded: 0, failed: 0, skipped: 0 };
+    const totals = { pages: 0, embedded: 0, failed: 0, skipped: 0, totalChunkProcessingMs: 0 };
     const tGlobal = process.hrtime();
+
+    // --- NEW: Create a limiter that allows 4 concurrent requests ---
+    const limit = pLimit(4);
 
     try {
         client = await pool.connect();
-
         logHeader('Starting embedding process for pages');
-        console.time('Total runtime');
-
         const tFetch = process.hrtime();
-        const res = await client.query('SELECT url, title, h1_tags, h2_tags, h3_tags, content FROM pages');
+        const res = await client.query('SELECT id, url, title, h1_tags, h2_tags, h3_tags, content FROM pages');
         const fetchMs = hrtimeMs(tFetch);
-
         totals.pages = res.rows.length;
 
         if (totals.pages === 0) {
@@ -129,7 +130,6 @@ async function processPages() {
         }
 
         logInfo(`Found ${totals.pages} pages (fetched in ${fetchMs} ms).`);
-
         const tTruncate = process.hrtime();
         await client.query('TRUNCATE TABLE knowledge_base RESTART IDENTITY');
         logInfo(`Cleared knowledge_base table in ${hrtimeMs(tTruncate)} ms.`);
@@ -137,6 +137,7 @@ async function processPages() {
         for (let i = 0; i < res.rows.length; i++) {
             const page = res.rows[i];
             const idx = i + 1;
+            const tPageStart = process.hrtime();
 
             const contentParts = [
                 `Title: ${page.title || 'N/A'}.`,
@@ -147,56 +148,76 @@ async function processPages() {
             ];
             const contentText = contentParts.join('\n');
 
-            const charCount = contentText.length;
-            const emptyish = charCount < 5 || !/\w/.test(contentText);
+            const splitter = new RecursiveCharacterTextSplitter({
+                chunkSize: 1500,
+                chunkOverlap: 300,
+            });
 
-            logHeader(`Page ${idx}/${totals.pages}`);
+            const chunks = await splitter.splitText(contentText);
+            logHeader(`Processing Page ${idx}/${totals.pages}`);
             logInfo(`URL: ${page.url || 'N/A'}`);
             logInfo(`Title: ${preview(page.title, 100)}`);
-            logInfo(`Chars: ${charCount}${emptyish ? ' (empty-ish)' : ''}`);
+            logInfo(`Chars: ${contentText.length}, Chunks: ${chunks.length}`);
 
-            if (emptyish) {
+            if (chunks.length === 0) {
                 totals.skipped++;
-                logWarn('Skipping page due to insufficient content.');
+                logWarn('Skipping page as it resulted in no chunks.');
                 continue;
             }
 
             try {
+                const validChunks = chunks.filter(chunk => chunk.length >= 5 && /\w/.test(chunk));
+                logInfo(`Creating ${validChunks.length} embedding tasks...`);
                 const tEmbed = process.hrtime();
-                const embedding = await generateEmbedding(contentText);
-                const embedMs = hrtimeMs(tEmbed);
+
+                // --- MODIFIED: Use the limiter to control concurrency ---
+                // Create an array of promise-returning functions
+                const embeddingTasks = validChunks.map(chunk => {
+                    return limit(() => generateEmbedding(chunk));
+                });
+
+                // Execute all tasks with the concurrency limit
+                const embeddings = await Promise.all(embeddingTasks);
+                logSuccess(`All ${embeddings.length} embeddings generated in ${hrtimeMs(tEmbed)} ms.`);
 
                 const tInsert = process.hrtime();
-                await client.query(
-                    `INSERT INTO knowledge_base (content_text, source_url, source_table, source_id, embedding)
-                     VALUES ($1, $2, $3, $4, $5)`,
-                    [contentText, page.url, 'pages', 'N/A', JSON.stringify(embedding)]
-                );
-                const insertMs = hrtimeMs(tInsert);
-
-                totals.embedded++;
-                logSuccess(`Embedded and saved (embed: ${embedMs} ms, insert: ${insertMs} ms).`);
-            } catch (embedError) {
-                totals.failed++;
-                logError(`Failed to embed page ${page.url}`, embedError);
+                for (let j = 0; j < validChunks.length; j++) {
+                    const chunk = validChunks[j];
+                    const embedding = embeddings[j];
+                    if (embedding) { // Only insert if embedding was successful
+                        await client.query(
+                            `INSERT INTO knowledge_base (content_text, source_url, source_table, source_id, embedding)
+                             VALUES ($1, $2, $3, $4, $5)`,
+                            [chunk, page.url, 'pages', page.id, JSON.stringify(embedding)]
+                        );
+                        totals.embedded++;
+                    } else {
+                        totals.failed++;
+                    }
+                }
+                logSuccess(`Inserted ${totals.embedded} chunks into DB in ${hrtimeMs(tInsert)} ms.`);
+            } catch (parallelError) {
+                totals.failed += chunks.length;
+                logError(`An error occurred during embedding for page ${page.url}`, parallelError);
             }
+
+            const pageElapsedMs = hrtimeMs(tPageStart);
+            totals.totalChunkProcessingMs += pageElapsedMs;
+            logSuccess(`Finished processing page in ${pageElapsedMs} ms.`);
         }
 
         logHeader('Finished embedding all pages');
-
-        // Final report
-        const elapsedMs = hrtimeMs(tGlobal);
+        const totalElapsedMs = hrtimeMs(tGlobal);
+        const avgTimePerPage = totals.pages > 0 ? (totals.totalChunkProcessingMs / totals.pages) : 0;
         const report = {
-            totalPages: totals.pages,
-            embedded: totals.embedded,
-            failed: totals.failed,
-            skipped: totals.skipped,
-            elapsedMs
+            'Total Pages': totals.pages,
+            'Chunks Embedded': totals.embedded,
+            'Chunks Failed/Skipped': `${totals.failed}/${totals.skipped}`,
+            'Total Runtime (ms)': totalElapsedMs,
+            'Avg. Time Per Page (ms)': avgTimePerPage.toFixed(2)
         };
-
         console.log(divider('Summary'));
         console.table(report);
-        console.timeEnd('Total runtime');
     } catch (err) {
         logError('Unexpected error during embedding process:', err);
     } finally {
