@@ -57,6 +57,32 @@ function countTokens(text) {
   return tokenizer.encode(text).length;
 }
 
+// --- NEW: Function to log chat interactions to the database ---
+const logToDb = async (logData) => {
+  const query = `
+        INSERT INTO chat_history(user_id, session_id, user_message, assistant_response, retrieved_context, final_prompt, latency_ms, status, error_message)
+        VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    `;
+  // Ensure all values are defined to prevent database errors
+  const values = [
+    logData.userId || 'N/A',
+    logData.sessionId || 'N/A',
+    logData.userMessage || 'N/A',
+    logData.assistantResponse,
+    logData.retrievedContext,
+    logData.finalPrompt,
+    logData.latency,
+    logData.status,
+    logData.errorMessage
+  ];
+  try {
+    await pool.query(query, values);
+    console.log('✅ Chat interaction successfully logged to database.');
+  } catch (dbError) {
+    console.error('❌ Failed to log chat interaction to database:', dbError);
+  }
+};
+
 
 // ---------- Middleware ----------
 app.use(cors());
@@ -101,19 +127,36 @@ app.post('/api/chat', async (req, res) => {
   logHeader('New /api/chat request');
   const tTotal = process.hrtime();
 
+  // --- MODIFIED: Extract IDs and prepare variables ---
+  const { messages, user_id, session_id } = req.body;
+  const userMessage = messages && messages.length > 0 ? messages[messages.length - 1].content : null;
+
+  // Define variables here to be accessible in the 'catch' block
+  let retrievedContextString = null;
+  let systemContent = null;
+  let totalMs = 0;
+  let queryEmbedding = null;
+  let key = null;
+
   try {
-    const { messages } = req.body;
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       logWarn('No messages provided in request body');
       return res.status(400).json({ error: 'No messages provided.' });
     }
+    if (!user_id || !session_id) {
+      logWarn('User ID or Session ID missing from request');
+      return res.status(400).json({ error: 'User and Session IDs are required.' });
+    }
 
-    const userMessage = messages[messages.length - 1].content;
+    logInfo(`User: ${user_id}, Session: ${session_id}`);
     logInfo(`User message: "${userMessage.slice(0, 80)}${userMessage.length > 80 ? '…' : ''}"`);
 
     // Context Retrieval
     const tContext = process.hrtime();
-    const { context: retrievedContextString, embedding: queryEmbedding, key } = await queryKnowledgeBase(userMessage);
+    const contextResult = await queryKnowledgeBase(userMessage);
+    retrievedContextString = contextResult.context;
+    queryEmbedding = contextResult.embedding;
+    key = contextResult.key;
     const contextMs = hrtimeMs(tContext);
 
     if (contextMs > LATENCY_THRESHOLDS.contextRetrieval) {
@@ -123,7 +166,7 @@ app.post('/api/chat', async (req, res) => {
     }
 
     // Build system prompt
-    let systemContent = `
+    systemContent = `
 You are a warm, helpful AI assistant guiding website visitors. 
 Your responses will be read aloud by a digital avatar, so speak naturally and conversationally.
 
@@ -181,37 +224,67 @@ Let me know if you have any other questions."
 
     const assistantResponse = response.choices[0].message.content;
 
-    // ** MODIFIED ** - Caching Logic is now consolidated here
+    // Your existing caching logic
     const apologyPatterns = [
       "i apologize", "i'm sorry", "sorry", "i do not have", "i don't have",
       "don't have enough information", "not enough information", "i'm unable to find", "unable to",
       "cannot answer", "no relevant information", "no information available",
       "please contact the organization directly"
     ];
-
     const hasApology = apologyPatterns.some(pat => assistantResponse.toLowerCase().includes(pat));
-
     if (!hasApology) {
-      pruneSize(); // Check for LRU pruning
+      pruneSize();
       cache.set(key, { value: assistantResponse, timestamp: now(), embedding: queryEmbedding });
-      markUsed(key); // Mark the new key as most recently used
+      markUsed(key);
       logSuccess('✅ Cache set for key:', JSON.stringify(key), 'Cache size:', cache.size);
     } else {
       logWarn('⛔ Not caching apology/fallback message for key:', JSON.stringify(key));
     }
-    // ** END MODIFIED **
 
     logSuccess('Chat processed successfully');
+
+    // --- NEW: Log successful interaction to DB ---
+    totalMs = hrtimeMs(tTotal);
+    await logToDb({
+      userId: user_id,
+      sessionId: session_id,
+      userMessage: userMessage,
+      assistantResponse: assistantResponse,
+      retrievedContext: retrievedContextString,
+      finalPrompt: systemContent,
+      latency: totalMs,
+      status: 'success',
+      errorMessage: null
+    });
+
     res.json({ response: assistantResponse });
 
   } catch (error) {
     logError('Critical failure during chat processing', error);
+
+    // --- NEW: Log failed interaction to DB ---
+    totalMs = hrtimeMs(tTotal);
+    await logToDb({
+      userId: user_id,
+      sessionId: session_id,
+      userMessage: userMessage,
+      assistantResponse: null,
+      retrievedContext: retrievedContextString,
+      finalPrompt: systemContent,
+      latency: totalMs,
+      status: 'error',
+      errorMessage: error.message
+    });
+
     res.status(500).json({ error: 'An internal error occurred. Please try again later.' });
   } finally {
-    const totalMs = hrtimeMs(tTotal);
+    // The finally block remains the same, calculating total time.
+    // The logging now happens within the try/catch blocks to ensure accuracy.
+    totalMs = hrtimeMs(tTotal);
     logInfo(`Total Chat Request Processing: ${totalMs} ms`);
   }
 });
+
 
 // ---------- Start Server ----------
 app.listen(PORT, () => {
