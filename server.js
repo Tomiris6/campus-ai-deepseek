@@ -209,7 +209,7 @@ Let me know if you have any other questions."
     // Call LLM
     const tLLM = process.hrtime();
     const response = await openai.chat.completions.create({
-      model: 'deepseek/deepseek-r1-distill-llama-70b:free',
+      model: 'openai/gpt-oss-20b:free',
       messages: fullMessages,
       temperature: 0.3,
       max_tokens: 1000,

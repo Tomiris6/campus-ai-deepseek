@@ -226,24 +226,26 @@ async function queryKnowledgeBase(userQuery) {
     const key = normalizeQuery(userQuery);
     pruneExpired();
 
-
-    // Step 1: Compute embedding for this query (semantic caching)
+    // Step 1: Compute embedding for the main query (for caching final response)
     const queryEmbedding = await getEmbedding(userQuery);
 
-
-    // Step 2: Semantic cache lookup (meaning-based match) -- with similarity logging
+    // Step 2 & 3: Check cache for full query (no changes here)
     for (const [cacheKey, entry] of cache.entries()) {
-        if (entry.embedding) {
-            const sim = cosineSimilarity(queryEmbedding, entry.embedding);
-            console.log(`Similarity to cache key "${cacheKey}":`, sim);
-            if (sim > SEMANTIC_SIM_THRESHOLD) {
-                markUsed(cacheKey);
-                console.log('✅ Semantic cache hit for key:', JSON.stringify(cacheKey), 'Sim:', sim);
-                return { context: entry.value, embedding: entry.embedding, key: cacheKey };
-            }
+        if (entry.embedding && cosineSimilarity(queryEmbedding, entry.embedding) > SEMANTIC_SIM_THRESHOLD) {
+            markUsed(cacheKey);
+            console.log('✅ Semantic cache hit for key:', JSON.stringify(cacheKey));
+            return { context: entry.value, embedding: entry.embedding, key: cacheKey };
         }
     }
+    if (cache.has(key)) {
+        markUsed(key);
+        console.log('✅ Cache hit for key:', JSON.stringify(key));
+        return { context: cache.get(key).value, embedding: cache.get(key).embedding, key };
+    }
 
+    console.log('❌ Cache miss for key:', JSON.stringify(key));
+    console.log(`\n=== Starting queryKnowledgeBase for user query: "${userQuery}" ===`);
+    const overallStart = Date.now();
 
     // Step 3: Standard string-match cache lookup (normalized key)
     console.log('\n=== CACHE DEBUGGING START ===');
@@ -252,113 +254,71 @@ async function queryKnowledgeBase(userQuery) {
     console.log('All current cache keys:', Array.from(cache.keys()));
     console.log('=== CACHE DEBUGGING END ===\n');
 
-
-    if (cache.has(key)) {
-        markUsed(key);
-        console.log('✅ Cache hit for key:', JSON.stringify(key));
-        return { context: cache.get(key).value, embedding: cache.get(key).embedding, key };
-    }
-    console.log('❌ Cache miss for key:', JSON.stringify(key));
-    console.log(`\n=== Starting queryKnowledgeBase for user query: "${userQuery}" ===`);
-    const overallStart = Date.now();
-
-
-    // Query breakdown logic
+    // Query breakdown logic (no changes here)
     let questions;
     let usedAISplit = false;
-    try {
-        if (userQuery.length > 60 || /\b(and|or|but|,|then)\b/i.test(userQuery)) {
-            console.log('Complex query detected: Using AI for splitting the question.');
-            questions = await breakDownQuery(userQuery);
-            usedAISplit = true;
-        } else {
-            console.log('Simple query detected: Skipping AI question splitting.');
-            questions = [userQuery];
-        }
-    } catch {
-        console.log('Error during AI breakdown, processing as single query.');
+    if (userQuery.length > 60 || /\b(and|or|but|,|then)\b/i.test(userQuery)) {
+        questions = await breakDownQuery(userQuery);
+        usedAISplit = true;
+    } else {
         questions = [userQuery];
     }
-    // Print each generated question with a number
-    if (usedAISplit) {
-        console.log('Generated sub-questions:');
-        questions.forEach((q, index) => {
-            console.log(`  ${index + 1}. ${q}`);
-        });
-    }
-
-
-    console.log(`Total sub-questions generated: ${questions.length}`);
-
-
-    // Enforce strict rule: use original query only if AI breakdown was skipped
     if (!usedAISplit) {
-        questions = [userQuery];  // Override with just the original query
+        questions = [userQuery];
     }
 
+    console.log('Generated sub-questions:', questions);
 
-    let candidateChunks = [];
-    for (const q of questions) {
-        let chunks;
-        let isCacheHit = false;
-
-
-        // ** MODIFIED ** - Check cache for the sub-question
-        const qEmbedding = await getEmbedding(q);
+    // --- NEW: Parallel Processing of Sub-Questions ---
+    const processingPromises = questions.map(async (q) => {
         const subKey = normalizeQuery(q);
+        const qEmbedding = await getEmbedding(q);
+
+        // Check cache for sub-question first
         for (const [cacheKey, entry] of cache.entries()) {
-            const sim = cosineSimilarity(qEmbedding, entry.embedding);
-            if (sim > SEMANTIC_SIM_THRESHOLD) {
-                console.log(`✅ Semantic cache hit for sub-question "${q}" from key: "${cacheKey}" Sim: ${sim}`);
-                chunks = entry.value.split('\n\n');
+            if (entry.embedding && cosineSimilarity(qEmbedding, entry.embedding) > SEMANTIC_SIM_THRESHOLD) {
+                console.log(`✅ Parallel semantic cache hit for sub-question "${q}"`);
                 markUsed(cacheKey);
-                isCacheHit = true;
-                break;
+                return entry.value.split('\n\n'); // Return cached chunks
             }
         }
 
-
-        if (!isCacheHit) {
-            try {
-                console.log(`\n--- Processing sub-question: "${q}" ---`);
-                const startRetrieve = Date.now();
-                chunks = await getVectorContext(qEmbedding, 15);
-                console.log(`Retrieved ${chunks.length} chunks in ${(Date.now() - startRetrieve) / 1000}s`);
-
-                // **MODIFIED**: Cache the context for the sub-question
-                const subContext = chunks.join('\n\n');
-                if (subContext.trim()) {
-                    pruneSize(); // Check for LRU pruning
-                    cache.set(subKey, { value: subContext, timestamp: now(), embedding: qEmbedding });
-                    markUsed(subKey);
-                    console.log('✅ Sub-question context cached for key:', JSON.stringify(subKey));
-                }
-
-            } catch (error) {
-                console.error(`Error retrieving chunks for "${q}":`, error.message || error);
-                continue;
+        // If no cache hit, retrieve from DB and then cache it
+        try {
+            console.log(`\n--- Fetching context for sub-question: "${q}" ---`);
+            const chunks = await getVectorContext(qEmbedding, 15);
+            const subContext = chunks.join('\n\n');
+            if (subContext.trim()) {
+                pruneSize();
+                cache.set(subKey, { value: subContext, timestamp: now(), embedding: qEmbedding });
+                markUsed(subKey);
+                console.log('✅ Sub-question context cached for key:', JSON.stringify(subKey));
             }
+            return chunks;
+        } catch (error) {
+            console.error(`Error retrieving chunks for "${q}":`, error.message || error);
+            return []; // Return an empty array on error to not break Promise.all
         }
+    });
 
+    const allChunkSets = await Promise.all(processingPromises);
+    const candidateChunks = allChunkSets.flat();
+    // --- END NEW ---
 
-        candidateChunks.push(...chunks);
-    }
-
-
-    candidateChunks = Array.from(new Set(candidateChunks));
-    console.log(`Total unique chunks from all sub-questions: ${candidateChunks.length}`);
-
+    // Deduplicate and process the final context (no changes here)
+    const uniqueChunks = Array.from(new Set(candidateChunks));
+    console.log(`\nTotal unique chunks from all sub-questions: ${uniqueChunks.length}`);
 
     const MAX_CONTEXT_TOKENS = 16000;
     const RESERVED_TOKENS = 3000;
-    const finalContext = selectChunksWithinTokenLimit(candidateChunks, MAX_CONTEXT_TOKENS - RESERVED_TOKENS);
+    const finalContext = selectChunksWithinTokenLimit(uniqueChunks, MAX_CONTEXT_TOKENS - RESERVED_TOKENS);
+
     console.log(`Final chunks sent to LLM: ${finalContext.split('\n\n').length}`);
     console.log(`Total processing time: ${(Date.now() - overallStart) / 1000}s`);
 
-
-    // Return the final context and the query embedding
     return { context: finalContext, embedding: queryEmbedding, key };
 }
+
 
 
 module.exports = { queryKnowledgeBase, cache, normalizeQuery, now, pruneSize, markUsed };
