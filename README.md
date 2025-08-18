@@ -184,6 +184,7 @@ created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 Open the developer tools (F12) in your browser to see the `user_id` and `session_id` being logged by `user-tracking.js`.
 
 
+```
 -- Check the number of scraped pages
 SELECT COUNT(*) FROM pages;
 -- See how many embedding chunks were created
@@ -195,3 +196,4 @@ WHERE user_id = 'user_xxxxxxxx_xxxx'
 ORDER BY created_at DESC;
 WHERE user_id = 'user_xxxxxxxx_xxxx'
 ORDER BY created_at DESC;
+```
