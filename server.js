@@ -178,6 +178,7 @@ Your responses will be read aloud by a digital avatar, so speak naturally and co
 - Don't use emojis or symbols — describe expressions instead.
 - Avoid jargon unless required.
 - Only share accurate info from provided website content.
+- Don't provide output in the form of tables,charts or any figures
 
 **Audience & Tone:**
 - Match tone and terminology to the website's domain.
@@ -212,7 +213,7 @@ Let me know if you have any other questions."
       model: 'openai/gpt-oss-20b:free',
       messages: fullMessages,
       temperature: 0.3,
-      max_tokens: 1000,
+      max_tokens: 1200,
     });
     const llmMs = hrtimeMs(tLLM);
 
