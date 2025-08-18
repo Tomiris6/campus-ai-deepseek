@@ -230,13 +230,23 @@ async function queryKnowledgeBase(userQuery) {
     const queryEmbedding = await getEmbedding(userQuery);
 
     // Step 2 & 3: Check cache for full query (no changes here)
+    console.log('\n--- Main Query Semantic Similarity Check ---');
     for (const [cacheKey, entry] of cache.entries()) {
-        if (entry.embedding && cosineSimilarity(queryEmbedding, entry.embedding) > SEMANTIC_SIM_THRESHOLD) {
-            markUsed(cacheKey);
-            console.log('✅ Semantic cache hit for key:', JSON.stringify(cacheKey));
-            return { context: entry.value, embedding: entry.embedding, key: cacheKey };
+        if (entry.embedding) {
+            const sim = cosineSimilarity(queryEmbedding, entry.embedding);
+            // ALWAYS log the similarity score
+            console.log(`- Sim vs. "${cacheKey}": ${sim.toFixed(4)}`);
+
+            // Then, check if it's a hit
+            if (sim > SEMANTIC_SIM_THRESHOLD) {
+                markUsed(cacheKey);
+                console.log('  ✅ Cache HIT for key:', JSON.stringify(cacheKey));
+                return { context: entry.value, embedding: entry.embedding, key: cacheKey };
+            }
         }
     }
+    console.log('--- End of Main Query Check ---\n');
+
     if (cache.has(key)) {
         markUsed(key);
         console.log('✅ Cache hit for key:', JSON.stringify(key));
@@ -275,13 +285,23 @@ async function queryKnowledgeBase(userQuery) {
         const qEmbedding = await getEmbedding(q);
 
         // Check cache for sub-question first
+        console.log(`- Checking cache for sub-question: "${q}"`);
+        let isCacheHit = false;
         for (const [cacheKey, entry] of cache.entries()) {
-            if (entry.embedding && cosineSimilarity(qEmbedding, entry.embedding) > SEMANTIC_SIM_THRESHOLD) {
-                console.log(`✅ Parallel semantic cache hit for sub-question "${q}"`);
-                markUsed(cacheKey);
-                return entry.value.split('\n\n'); // Return cached chunks
+            if (entry.embedding) {
+                const sim = cosineSimilarity(qEmbedding, entry.embedding);
+                // ALWAYS log the similarity score
+                console.log(`  - Sim vs. "${cacheKey}": ${sim.toFixed(4)}`);
+
+                if (sim > SEMANTIC_SIM_THRESHOLD) {
+                    console.log(`    ✅ Parallel semantic cache HIT`);
+                    markUsed(cacheKey);
+                    isCacheHit = true;
+                    return entry.value.split('\n\n'); // Return cached chunks
+                }
             }
         }
+
 
         // If no cache hit, retrieve from DB and then cache it
         try {
@@ -309,7 +329,7 @@ async function queryKnowledgeBase(userQuery) {
     const uniqueChunks = Array.from(new Set(candidateChunks));
     console.log(`\nTotal unique chunks from all sub-questions: ${uniqueChunks.length}`);
 
-    const MAX_CONTEXT_TOKENS = 16000;
+    const MAX_CONTEXT_TOKENS = 12000;
     const RESERVED_TOKENS = 3000;
     const finalContext = selectChunksWithinTokenLimit(uniqueChunks, MAX_CONTEXT_TOKENS - RESERVED_TOKENS);
 

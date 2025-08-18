@@ -229,7 +229,8 @@ Let me know if you have any other questions."
       "i apologize", "i'm sorry", "sorry", "i do not have", "i don't have",
       "don't have enough information", "not enough information", "i'm unable to find", "unable to",
       "cannot answer", "no relevant information", "no information available",
-      "please contact the organization directly"
+      "please contact the organization directly",
+      "Sorry, an error occurred with the server. Please try again."
     ];
     const hasApology = apologyPatterns.some(pat => assistantResponse.toLowerCase().includes(pat));
     if (!hasApology) {
