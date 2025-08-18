@@ -31,7 +31,7 @@ This branch implements a complete RAG (Retrieval-Augmented Generation) architect
 
 
 ## 📁 Project Structure
-
+```
 RAG_architecture/
 ├── 📋 Campus-AI-Digital-Human-Project.pdf    # Project documentation
 ├── 🗄️ AI_CB_schema.sql                       # Full PostgreSQL schema with all tables
@@ -42,6 +42,7 @@ RAG_architecture/
 ├── 🕷️ webscraper_code.py                     # Advanced web scraping script
 ├── 🌐 index.html                             # Frontend interface for the chatbot
 └── ⚡ user-tracking.js                      # NEW: Frontend script for user/session ID generation
+```
 
 
 
