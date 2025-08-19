@@ -38,7 +38,7 @@ function cosineSimilarity(a, b) {
     if (normA === 0 || normB === 0) return 0;
     return dot / (Math.sqrt(normA) * Math.sqrt(normB));
 }
-const SEMANTIC_SIM_THRESHOLD = 0.80;
+const SEMANTIC_SIM_THRESHOLD = 0.89;
 
 
 // Retry wrapper for API calls

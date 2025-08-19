@@ -127,11 +127,24 @@ app.post('/api/chat', async (req, res) => {
   logHeader('New /api/chat request');
   const tTotal = process.hrtime();
 
-  // --- MODIFIED: Extract IDs and prepare variables ---
-  const { messages, user_id, session_id } = req.body;
+  //console.log("📥 Raw request body:", req.body);
+
+  // --- Extract IDs and prepare variables ---
+  // Extract IDs, support both camelCase (frontend) and snake_case (Python)
+  const {
+    messages,
+    user_id,
+    session_id,
+    userId,
+    sessionId,
+    voiceMode
+  } = req.body;
+
+  const safeUserId = user_id || userId || "anonymous_user";
+  const safeSessionId = session_id || sessionId || "session_" + Date.now();
+
   const userMessage = messages && messages.length > 0 ? messages[messages.length - 1].content : null;
 
-  // Define variables here to be accessible in the 'catch' block
   let retrievedContextString = null;
   let systemContent = null;
   let totalMs = 0;
@@ -144,11 +157,12 @@ app.post('/api/chat', async (req, res) => {
       return res.status(400).json({ error: 'No messages provided.' });
     }
     if (!user_id || !session_id) {
-      logWarn('User ID or Session ID missing from request');
-      return res.status(400).json({ error: 'User and Session IDs are required.' });
+      logWarn('User ID or Session ID missing from request — using defaults');
     }
 
-    logInfo(`User: ${user_id}, Session: ${session_id}`);
+
+
+    logInfo(`User: ${safeUserId}, Session: ${safeSessionId}`);
     logInfo(`User message: "${userMessage.slice(0, 80)}${userMessage.length > 80 ? '…' : ''}"`);
 
     // Context Retrieval
@@ -165,7 +179,7 @@ app.post('/api/chat', async (req, res) => {
       logInfo(`Context retrieval took ${contextMs} ms`);
     }
 
-    // Build system prompt
+    // --- Voice-Optimized System Prompt (always enabled) ---
     systemContent = `
 You are a warm, helpful AI assistant guiding website visitors. 
 Your responses will be read aloud by a digital avatar, so speak naturally and conversationally.
@@ -187,14 +201,13 @@ Your responses will be read aloud by a digital avatar, so speak naturally and co
 **Content Rules:**
 - Use only "Relevant Information from Knowledge Base".
 - Do not speculate or invent answers.
-- Include source URLs directly after relevant answers.
+- Include source URLs directly after relevant answers only if the USER ASKS FOR IT in the next response.
 
 If you do NOT know the answer, reply EXACTLY:
 "I apologize, but I don't have enough information to answer that question.
 Please contact the organization directly for more details or check their official website.  
 Let me know if you have any other questions."
-
----`;
+`;
 
     if (retrievedContextString?.trim()) {
       systemContent += `\n---\nRelevant Information from Knowledge Base:\n${retrievedContextString}\n`;
@@ -212,8 +225,8 @@ Let me know if you have any other questions."
     const response = await openai.chat.completions.create({
       model: 'openai/gpt-oss-20b:free',
       messages: fullMessages,
-      temperature: 0.3,
-      max_tokens: 1200,
+      temperature: 0.6,   // more natural voice replies
+      max_tokens: 400,    // shorter answers for TTS
     });
     const llmMs = hrtimeMs(tLLM);
 
@@ -225,7 +238,7 @@ Let me know if you have any other questions."
 
     const assistantResponse = response.choices[0].message.content;
 
-    // Your existing caching logic
+    // --- Caching Logic ---
     const apologyPatterns = [
       "i apologize", "i'm sorry", "sorry", "i do not have", "i don't have",
       "don't have enough information", "not enough information", "i'm unable to find", "unable to",
@@ -244,12 +257,14 @@ Let me know if you have any other questions."
     }
 
     logSuccess('Chat processed successfully');
+    logInfo("Full LLM Response:", assistantResponse);
 
-    // --- NEW: Log successful interaction to DB ---
+
+    // --- Log to DB ---
     totalMs = hrtimeMs(tTotal);
     await logToDb({
-      userId: user_id,
-      sessionId: session_id,
+      userId: safeUserId,
+      sessionId: safeSessionId,
       userMessage: userMessage,
       assistantResponse: assistantResponse,
       retrievedContext: retrievedContextString,
@@ -259,16 +274,18 @@ Let me know if you have any other questions."
       errorMessage: null
     });
 
+
+    // ✅ Unified response format
     res.json({ response: assistantResponse });
 
   } catch (error) {
     logError('Critical failure during chat processing', error);
 
-    // --- NEW: Log failed interaction to DB ---
+    // --- Log error to DB ---
     totalMs = hrtimeMs(tTotal);
     await logToDb({
-      userId: user_id,
-      sessionId: session_id,
+      userId: safeUserId,
+      sessionId: safeSessionId,
       userMessage: userMessage,
       assistantResponse: null,
       retrievedContext: retrievedContextString,
@@ -280,12 +297,11 @@ Let me know if you have any other questions."
 
     res.status(500).json({ error: 'An internal error occurred. Please try again later.' });
   } finally {
-    // The finally block remains the same, calculating total time.
-    // The logging now happens within the try/catch blocks to ensure accuracy.
     totalMs = hrtimeMs(tTotal);
     logInfo(`Total Chat Request Processing: ${totalMs} ms`);
   }
 });
+
 
 
 // ---------- Start Server ----------
