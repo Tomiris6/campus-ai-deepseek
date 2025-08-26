@@ -2,6 +2,8 @@
 
 const { Pool } = require('pg');
 const axios = require('axios');
+const { get_encoding } = require("tiktoken");
+const encoding = get_encoding("cl100k_base");
 require('dotenv').config();
 
 
@@ -58,30 +60,25 @@ async function axiosPostWithRetries(url, data, headers, maxRetries = 3, baseDela
 }
 
 
-// Break down complex queries into sub-questions
 async function breakDownQuery(query) {
     const prompt = `Parse this user query into 3-4 specific sub-questions. Return ONLY a valid JSON array of strings.
-
 
 Examples:
 Input: "What is the school mission and what clubs are available?"
 Output: ["What is the school mission?", "What clubs are available?"]
 
-
 Input: "Who is the principal and what are the admission requirements?"  
 Output: ["Who is the principal?", "What are the admission requirements?"]
 
-
 User Query: "${query}"`;
 
-
     const payload = {
-        model: 'meta-llama/llama-3.2-3b-instruct:free',
+        model: 'meta-llama/llama-3.3-8b-instruct:free', // Or another fast, reliable model like 'openai/gpt-3.5-turbo' or 'google/gemma-7b-it'
         messages: [{ role: 'user', content: prompt }],
         max_tokens: 150,
         temperature: 0,
+        // response_format: { type: "json_object" } // Enforce JSON output where possible
     };
-
 
     try {
         const response = await axiosPostWithRetries(
@@ -93,24 +90,51 @@ User Query: "${query}"`;
             }
         );
 
-
         let rawContent = response.data.choices[0].message.content.trim();
+
+        // --- ROBUST JSON PARSING ---
         let jsonArray;
         try {
+            // First, try to parse the whole string
             jsonArray = JSON.parse(rawContent);
         } catch {
-            const match = rawContent.match(/\[[\s\S]*\]/);
-            if (match) jsonArray = JSON.parse(match);
-            else throw new Error('No valid JSON array found in AI output');
+            // If that fails, search for a JSON array within a markdown code block
+            const match = rawContent.match(/\[[\s\S]*?\]/);
+            if (match && match[0]) {
+                try {
+                    jsonArray = JSON.parse(match[0]);
+                } catch (e) {
+                    console.error('Failed to parse extracted JSON array:', e.message);
+                    throw new Error('Could not parse JSON from AI response.');
+                }
+            } else {
+                throw new Error('No valid JSON array found in AI output');
+            }
         }
 
+        // The final response might be an object with a key containing the array
+        // Example: { "sub_questions": ["q1", "q2"] }
+        if (typeof jsonArray === 'object' && !Array.isArray(jsonArray)) {
+            const possibleArray = Object.values(jsonArray).find(Array.isArray);
+            if (possibleArray) {
+                return possibleArray;
+            }
+        }
 
-        return Array.isArray(jsonArray) ? jsonArray : [query];
+        return Array.isArray(jsonArray) ? jsonArray : [query]; // Final fallback
+
     } catch (error) {
-        console.error('Error breaking down query:', error.response?.data || error.message);
-        return [query];
+        console.error('Error breaking down query with AI:', error.response?.data || error.message);
+
+        // --- SECONDARY FIX: Simple, rule-based fallback logic ---
+        console.warn('AI query breakdown failed. Falling back to simple keyword splitting.');
+        const parts = query.split(/\s+(?:and|or|but|,|then|what about)\s+/i).filter(Boolean);
+
+        // Return the split parts if successful, otherwise the original query as a last resort
+        return parts.length > 1 ? parts : [query];
     }
 }
+
 
 
 async function getEmbedding(text) {
@@ -129,7 +153,7 @@ async function getEmbedding(text) {
 }
 
 
-async function getVectorContext(embedding, limit = 15) {
+async function getVectorContext(embedding, limit = 10) {
     try {
         const vectorRows = (await pool.query(
             `SELECT content_text, embedding <-> $1 AS distance
@@ -168,9 +192,10 @@ function selectChunksWithinTokenLimit(chunks, maxTokens) {
     const selectedChunks = [];
     let tokenCount = 0;
     for (const chunk of chunks) {
-        // Removed the now-deleted countTokens function and its dependency
-        // This is a placeholder for a more robust token counting method if needed
-        const chunkTokens = chunk.length / 4;
+        // MODIFIED: Using a proper tokenizer for accuracy
+        const chunkTokens = encoding.encode(chunk).length;
+
+        // A buffer is still a good idea
         if (tokenCount + chunkTokens > maxTokens * 0.9) {
             break;
         }
@@ -222,122 +247,97 @@ function pruneSize() {
 }
 
 
-async function queryKnowledgeBase(userQuery) {
+async function queryKnowledgeBase(userQuery, userId = 'anonymous', sessionId = 'no-session') {
+    console.log(`\n[2. RAG Pipeline Started]`);
     const key = normalizeQuery(userQuery);
     pruneExpired();
 
-    // Step 1: Compute embedding for the main query (for caching final response)
     const queryEmbedding = await getEmbedding(userQuery);
 
-    // Step 2 & 3: Check cache for full query (no changes here)
-    console.log('\n--- Main Query Semantic Similarity Check ---');
+    console.log('\n  → [Cache Check]');
+
+    // This top-level cache check is the ONLY cache check. It looks for a final, previously-generated answer.
     for (const [cacheKey, entry] of cache.entries()) {
         if (entry.embedding) {
             const sim = cosineSimilarity(queryEmbedding, entry.embedding);
-            // ALWAYS log the similarity score
-            console.log(`- Sim vs. "${cacheKey}": ${sim.toFixed(4)}`);
-
-            // Then, check if it's a hit
+            console.log(`    - Similarity vs "${cacheKey}": ${sim.toFixed(4)}`);
             if (sim > SEMANTIC_SIM_THRESHOLD) {
                 markUsed(cacheKey);
-                console.log('  ✅ Cache HIT for key:', JSON.stringify(cacheKey));
-                return { context: entry.value, embedding: entry.embedding, key: cacheKey };
+                console.log(`    ✅ Semantic Cache HIT with similarity ${sim.toFixed(4)}`);
+                // If we get a hit, we return the cached FINAL ANSWER and a flag.
+                // The 'context' here is actually the final answer from a previous run.
+                return { context: entry.value, cacheHit: true };
             }
         }
     }
-    console.log('--- End of Main Query Check ---\n');
 
-    if (cache.has(key)) {
-        markUsed(key);
-        console.log('✅ Cache hit for key:', JSON.stringify(key));
-        return { context: cache.get(key).value, embedding: cache.get(key).embedding, key };
-    }
+    console.log('    - ❌ Semantic cache MISS for the main query.');
 
-    console.log('❌ Cache miss for key:', JSON.stringify(key));
-    console.log(`\n=== Starting queryKnowledgeBase for user query: "${userQuery}" ===`);
-    const overallStart = Date.now();
-
-    // Step 3: Standard string-match cache lookup (normalized key)
-    console.log('\n=== CACHE DEBUGGING START ===');
-    console.log('Normalized key:', JSON.stringify(key));
-    console.log('Cache size before check:', cache.size);
-    console.log('All current cache keys:', Array.from(cache.keys()));
-    console.log('=== CACHE DEBUGGING END ===\n');
-
-    // Query breakdown logic (no changes here)
+    // --- Query Breakdown ---
+    console.log(`\n  → [AI Query Breakdown]`);
     let questions;
-    let usedAISplit = false;
     if (userQuery.length > 60 || /\b(and|or|but|,|then)\b/i.test(userQuery)) {
         questions = await breakDownQuery(userQuery);
-        usedAISplit = true;
     } else {
         questions = [userQuery];
     }
-    if (!usedAISplit) {
-        questions = [userQuery];
-    }
+    console.log(`    - Decomposed into ${questions.length} sub-questions:`);
+    questions.forEach(q => console.log(`      - "${q}"`));
 
-    console.log('Generated sub-questions:', questions);
-
-    // --- NEW: Parallel Processing of Sub-Questions ---
+    // --- Sub-Question Processing ---
+    console.log(`\n  → [Sub-Question Processing]`);
     const processingPromises = questions.map(async (q) => {
-        const subKey = normalizeQuery(q);
         const qEmbedding = await getEmbedding(q);
+        const chunks = await getVectorContext(qEmbedding, 15);
+        console.log(`    - For "${q}": 📂 Vector search retrieved ${chunks.length} chunks.`);
 
-        // Check cache for sub-question first
-        console.log(`- Checking cache for sub-question: "${q}"`);
-        let isCacheHit = false;
+        // --- BUGGY LOGIC COMMENTED OUT AS REQUESTED ---
+        // This was the old, incorrect logic that cached raw, irrelevant context.
+        // It has been removed from the flow and is only here for reference.
+        /*
+        const subKey = normalizeQuery(q);
         for (const [cacheKey, entry] of cache.entries()) {
-            if (entry.embedding) {
-                const sim = cosineSimilarity(qEmbedding, entry.embedding);
-                // ALWAYS log the similarity score
-                console.log(`  - Sim vs. "${cacheKey}": ${sim.toFixed(4)}`);
-
-                if (sim > SEMANTIC_SIM_THRESHOLD) {
-                    console.log(`    ✅ Parallel semantic cache HIT`);
-                    markUsed(cacheKey);
-                    isCacheHit = true;
-                    return entry.value.split('\n\n'); // Return cached chunks
-                }
+            if (entry.embedding && cosineSimilarity(qEmbedding, entry.embedding) > SEMANTIC_SIM_THRESHOLD) {
+                console.log(`    - For "${q}": ✅ Sub-question cache HIT.`);
+                markUsed(cacheKey);
+                return entry.value.split('\n\n');
             }
         }
-
-
-        // If no cache hit, retrieve from DB and then cache it
-        try {
-            console.log(`\n--- Fetching context for sub-question: "${q}" ---`);
-            const chunks = await getVectorContext(qEmbedding, 15);
-            const subContext = chunks.join('\n\n');
-            if (subContext.trim()) {
-                pruneSize();
-                cache.set(subKey, { value: subContext, timestamp: now(), embedding: qEmbedding });
-                markUsed(subKey);
-                console.log('✅ Sub-question context cached for key:', JSON.stringify(subKey));
-            }
-            return chunks;
-        } catch (error) {
-            console.error(`Error retrieving chunks for "${q}":`, error.message || error);
-            return []; // Return an empty array on error to not break Promise.all
+        const subContext = chunks.join('\n\n');
+        if (subContext.trim()) {
+            pruneSize();
+            cache.set(subKey, { value: subContext, timestamp: now(), embedding: qEmbedding });
+            markUsed(subKey);
         }
+        */
+        // --- END OF BUGGY LOGIC ---
+
+        return chunks;
     });
 
     const allChunkSets = await Promise.all(processingPromises);
     const candidateChunks = allChunkSets.flat();
-    // --- END NEW ---
-
-    // Deduplicate and process the final context (no changes here)
     const uniqueChunks = Array.from(new Set(candidateChunks));
-    console.log(`\nTotal unique chunks from all sub-questions: ${uniqueChunks.length}`);
 
-    const MAX_CONTEXT_TOKENS = 12000;
-    const RESERVED_TOKENS = 3000;
-    const finalContext = selectChunksWithinTokenLimit(uniqueChunks, MAX_CONTEXT_TOKENS - RESERVED_TOKENS);
+    // --- Context Consolidation ---
+    console.log('\n[3. Context Consolidation]');
+    const finalContext = selectChunksWithinTokenLimit(uniqueChunks, 12000 - 3000);
+    console.log(`- ✅ Assembled ${finalContext.split('\n\n').length} unique chunks for the final prompt.`);
+    console.log('- Chunks Sent to LLM (Preview):');
+    finalContext.split('\n\n').slice(0, 5).forEach((chunk, i) => {
+        const preview = chunk.replace(/\s+/g, ' ').substring(0, 80);
+        console.log(`  [Chunk ${i + 1}] ${preview}...`);
+    });
+    if (finalContext.split('\n\n').length > 5) {
+        console.log(`  ... (and ${finalContext.split('\n\n').length - 5} more)`);
+    }
 
-    console.log(`Final chunks sent to LLM: ${finalContext.split('\n\n').length}`);
-    console.log(`Total processing time: ${(Date.now() - overallStart) / 1000}s`);
-
-    return { context: finalContext, embedding: queryEmbedding, key };
+    // On a cache miss, we return the assembled CONTEXT, the query embedding, the key, and the cacheHit=false flag.
+    return { context: finalContext, embedding: queryEmbedding, key: key, cacheHit: false };
 }
+
+
+
 
 
 

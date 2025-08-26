@@ -116,6 +116,7 @@ const openai = new OpenAI({
   apiKey: process.env.API_KEY,
   baseURL: 'https://openrouter.ai/api/v1',
   timeout: 60000,
+  maxRetries: 3,
 });
 
 // ---------- Routes ----------
@@ -124,65 +125,60 @@ app.get('/', (req, res) => {
 });
 
 app.post('/api/chat', async (req, res) => {
-  logHeader('New /api/chat request');
   const tTotal = process.hrtime();
+  logHeader('New /api/chat request');
 
-  //console.log("📥 Raw request body:", req.body);
-
-  // --- Extract IDs and prepare variables ---
-  // Extract IDs, support both camelCase (frontend) and snake_case (Python)
-  const {
-    messages,
-    user_id,
-    session_id,
-    userId,
-    sessionId,
-    voiceMode
-  } = req.body;
-
+  const { messages, user_id, session_id, userId, sessionId } = req.body;
   const safeUserId = user_id || userId || "anonymous_user";
   const safeSessionId = session_id || sessionId || "session_" + Date.now();
-
   const userMessage = messages && messages.length > 0 ? messages[messages.length - 1].content : null;
 
   let retrievedContextString = null;
   let systemContent = null;
-  let totalMs = 0;
-  let queryEmbedding = null;
-  let key = null;
+
+  if (!userMessage) {
+    logWarn('No messages provided');
+    return res.status(400).json({ error: 'No messages provided.' });
+  }
 
   try {
-    if (!messages || !Array.isArray(messages) || messages.length === 0) {
-      logWarn('No messages provided in request body');
-      return res.status(400).json({ error: 'No messages provided.' });
+    // Step 1: Get either a final answer (cache hit) or context (cache miss)
+    const contextResult = await queryKnowledgeBase(userMessage, safeUserId, safeSessionId);
+
+    // Step 2: Handle the Cache Hit case
+    if (contextResult.cacheHit) {
+      const cachedResponse = contextResult.context; // On a hit, 'context' is the final answer
+
+      logHeader('Final Output & Summary');
+      console.log('   → Full LLM Response (from Cache):');
+      console.log(cachedResponse.split('\n').map(line => `     ${line}`).join('\n'));
+
+      const totalMs = hrtimeMs(tTotal);
+      console.log('\n   → Summary:');
+      logInfo(`Total Request Time: ${totalMs} ms`);
+      logSuccess('   - ✅ Cache status: Response successfully served from cache.');
+
+      await logToDb({
+        userId: safeUserId, sessionId: safeSessionId, userMessage: userMessage,
+        assistantResponse: cachedResponse,
+        retrievedContext: "N/A (Cache Hit)",
+        finalPrompt: "N/A (Cache Hit)",
+        latency: totalMs,
+        status: 'success_cache_hit',
+        errorMessage: null
+      });
+
+      // Exit early, sending the cached response directly
+      return res.json({ response: cachedResponse });
     }
-    if (!user_id || !session_id) {
-      logWarn('User ID or Session ID missing from request — using defaults');
-    }
 
+    // Step 3: Handle the Cache Miss case (full RAG pipeline)
+    retrievedContextString = contextResult.context; // On a miss, 'context' is the raw context for the LLM
 
-
-    logInfo(`User: ${safeUserId}, Session: ${safeSessionId}`);
-    logInfo(`User message: "${userMessage.slice(0, 80)}${userMessage.length > 80 ? '…' : ''}"`);
-
-    // Context Retrieval
-    const tContext = process.hrtime();
-    const contextResult = await queryKnowledgeBase(userMessage);
-    retrievedContextString = contextResult.context;
-    queryEmbedding = contextResult.embedding;
-    key = contextResult.key;
-    const contextMs = hrtimeMs(tContext);
-
-    if (contextMs > LATENCY_THRESHOLDS.contextRetrieval) {
-      logWarn(`Context retrieval took ${contextMs} ms (Threshold: ${LATENCY_THRESHOLDS.contextRetrieval} ms)`);
-    } else {
-      logInfo(`Context retrieval took ${contextMs} ms`);
-    }
-
-    // --- Voice-Optimized System Prompt (always enabled) ---
     systemContent = `
 You are a warm, helpful AI assistant guiding website visitors. 
 Your responses will be read aloud by a digital avatar, so speak naturally and conversationally.
+
 
 **Speech Output Guidelines:**
 - Sound like you're chatting in real time: clear, friendly, and engaging.
@@ -194,78 +190,80 @@ Your responses will be read aloud by a digital avatar, so speak naturally and co
 - Only share accurate info from provided website content.
 - Don't provide output in the form of tables,charts or any figures
 
+
 **Audience & Tone:**
 - Match tone and terminology to the website's domain.
 - Respectful, clear language.
+
 
 **Content Rules:**
 - Use only "Relevant Information from Knowledge Base".
 - Do not speculate or invent answers.
 - Include source URLs directly after relevant answers only if the USER ASKS FOR IT in the next response.
 
+
 If you do NOT know the answer, reply EXACTLY:
 "I apologize, but I don't have enough information to answer that question.
-Please contact the organization directly for more details or check their official website.  
+Please contact the organization directly for more details or check their official website.  
 Let me know if you have any other questions."
-`;
 
-    if (retrievedContextString?.trim()) {
-      systemContent += `\n---\nRelevant Information from Knowledge Base:\n${retrievedContextString}\n`;
-    }
+
+---
+Relevant Information from Knowledge Base:
+${retrievedContextString}
+`;
 
     const systemMessage = { role: 'system', content: systemContent };
     const fullMessages = [systemMessage, ...messages];
 
-    logInfo(`Sending ${fullMessages.length} messages to LLM.`);
-    const promptTokenCount = countTokens(systemContent);
-    logInfo(`Approximate prompt tokens: ${promptTokenCount}`);
+    logHeader('LLM Final Response Generation');
+    logInfo(`Sending prompt to LLM...`);
 
-    // Call LLM
-    const tLLM = process.hrtime();
     const response = await openai.chat.completions.create({
       model: 'openai/gpt-oss-20b:free',
       messages: fullMessages,
-      temperature: 0.6,   // more natural voice replies
-      max_tokens: 400,    // shorter answers for TTS
+      temperature: 0.6,
+      max_tokens: 600,
     });
-    const llmMs = hrtimeMs(tLLM);
 
-    if (llmMs > LATENCY_THRESHOLDS.llmGeneration) {
-      logWarn(`LLM response generation took ${llmMs} ms (Threshold: ${LATENCY_THRESHOLDS.llmGeneration} ms)`);
-    } else {
-      logInfo(`LLM response generation took ${llmMs} ms`);
+    // Validate the API response structure before trying to access it
+    if (!response || !response.choices || response.choices.length === 0) {
+      throw new Error('Invalid response structure from LLM API.');
     }
 
     const assistantResponse = response.choices[0].message.content;
 
-    // --- Caching Logic ---
-    const apologyPatterns = [
-      "i apologize", "i'm sorry", "sorry", "i do not have", "i don't have",
-      "don't have enough information", "not enough information", "i'm unable to find", "unable to",
-      "cannot answer", "no relevant information", "no information available",
-      "please contact the organization directly",
-      "Sorry, an error occurred with the server. Please try again."
-    ];
-    const hasApology = apologyPatterns.some(pat => assistantResponse.toLowerCase().includes(pat));
-    if (!hasApology) {
-      pruneSize();
-      cache.set(key, { value: assistantResponse, timestamp: now(), embedding: queryEmbedding });
-      markUsed(key);
-      logSuccess('✅ Cache set for key:', JSON.stringify(key), 'Cache size:', cache.size);
-    } else {
-      logWarn('⛔ Not caching apology/fallback message for key:', JSON.stringify(key));
+    logHeader('Final Output & Summary');
+
+    // Validate the content of the response
+    if (!assistantResponse || assistantResponse.trim() === '') {
+      throw new Error('LLM returned an empty response.');
     }
 
-    logSuccess('Chat processed successfully');
-    logInfo("Full LLM Response:", assistantResponse);
+    console.log('   → Full LLM Response:');
+    console.log(assistantResponse.split('\n').map(line => `     ${line}`).join('\n'));
 
+    const totalMs = hrtimeMs(tTotal);
+    console.log('\n   → Summary:');
+    logInfo(`Total Request Time: ${totalMs} ms`);
 
-    // --- Log to DB ---
-    totalMs = hrtimeMs(tTotal);
+    // Step 4: Cache the final, validated answer
+    const isApology = assistantResponse.toLowerCase().includes("i apologize");
+    if (!isApology) {
+      pruneSize();
+      cache.set(contextResult.key, {
+        value: assistantResponse, // Cache the final answer
+        timestamp: now(),
+        embedding: contextResult.embedding
+      });
+      markUsed(contextResult.key);
+      logSuccess('   - ✅ Cache status: Response successfully stored in cache.');
+    } else {
+      logInfo('   - ⛔ Cache status: Response not cached (it was a fallback).');
+    }
+
     await logToDb({
-      userId: safeUserId,
-      sessionId: safeSessionId,
-      userMessage: userMessage,
+      userId: safeUserId, sessionId: safeSessionId, userMessage: userMessage,
       assistantResponse: assistantResponse,
       retrievedContext: retrievedContextString,
       finalPrompt: systemContent,
@@ -274,33 +272,24 @@ Let me know if you have any other questions."
       errorMessage: null
     });
 
-
-    // ✅ Unified response format
     res.json({ response: assistantResponse });
 
   } catch (error) {
     logError('Critical failure during chat processing', error);
-
-    // --- Log error to DB ---
-    totalMs = hrtimeMs(tTotal);
+    const totalMs = hrtimeMs(tTotal);
     await logToDb({
-      userId: safeUserId,
-      sessionId: safeSessionId,
-      userMessage: userMessage,
-      assistantResponse: null,
-      retrievedContext: retrievedContextString,
-      finalPrompt: systemContent,
-      latency: totalMs,
-      status: 'error',
-      errorMessage: error.message
+      userId: safeUserId, sessionId: safeSessionId, userMessage: userMessage,
+      assistantResponse: null, retrievedContext: retrievedContextString,
+      finalPrompt: systemContent, latency: totalMs, status: 'error', errorMessage: error.message
     });
-
-    res.status(500).json({ error: 'An internal error occurred. Please try again later.' });
+    res.status(500).json({ error: 'An internal error occurred.' });
   } finally {
-    totalMs = hrtimeMs(tTotal);
-    logInfo(`Total Chat Request Processing: ${totalMs} ms`);
+    console.log(divider());
   }
 });
+
+
+
 
 
 
