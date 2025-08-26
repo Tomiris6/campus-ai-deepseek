@@ -19,7 +19,7 @@ This branch implements a complete RAG (Retrieval-Augmented Generation) architect
 ┌─────────────────┐    ┌───────────────────┐    ┌─────────────────┐
 │   AI Response   │◀───│ Context Retrieval│◀── │   Embeddings    │
 │   Generation    │    │   (Vector Search) │    │   (BGE-Large)   │
-│  (DeepSeek R1)  │    │                   │    │                 │
+│  (gpt-oss 20B)  │    │                   │    │                 │
 └─────────────────┘    └───────────────────┘    └─────────────────┘
       │
       └─────────────────────────────────▶┌─────────────────┐
